@@ -1,0 +1,97 @@
+{
+  "broll_cuts": [
+    {
+      "timestamp": 1.7,
+      "duration": 3.0,
+      "score": 0.8,
+      "keywords": [
+        "AI software interface",
+        "AI animation process",
+        "AI writing and editing"
+      ],
+      "alternative_keywords": [
+        [
+          "AI voiceover software",
+          "digital editing screen"
+        ],
+        [
+          "AI text generation",
+          "AI video editing"
+        ],
+        [
+          "AI technology in action",
+          "AI creative process"
+        ]
+      ],
+      "visual_concepts": [
+        "computer screen with AI software",
+        "animated AI process",
+        "AI editing timeline"
+      ],
+      "abstract_concepts": [
+        "automation of creative tasks",
+        "AI-driven content creation",
+        "technology replacing human roles"
+      ],
+      "original_keywords": [
+        "AI writing",
+        "AI voiceover",
+        "AI editing"
+      ],
+      "reason": "Visuals of AI software interfaces or animations showing AI writing, voiceover, and editing processes would effectively illustrate the concept of AI handling these tasks, enhancing the viewer's understanding of AI's capabilities.",
+      "transcript_segment": "It was written, voiced and edited entirely by AI no crew,"
+    },
+    {
+      "timestamp": 8.55,
+      "duration": 3.0,
+      "score": 0.9,
+      "keywords": [
+        "AI in daily life",
+        "futuristic cityscape",
+        "technology in everyday activities"
+      ],
+      "alternative_keywords": [
+        [
+          "smart home devices",
+          "AI interaction",
+          "urban technology"
+        ],
+        [
+          "robotics in public spaces",
+          "digital interfaces",
+          "modern technology"
+        ],
+        [
+          "augmented reality usage",
+          "AI and humans",
+          "tech-enhanced lifestyle"
+        ]
+      ],
+      "visual_concepts": [
+        "people using AI devices",
+        "city with digital overlays",
+        "robots interacting with humans"
+      ],
+      "abstract_concepts": [
+        "AI integration into society",
+        "technology as part of life",
+        "future meets present"
+      ],
+      "original_keywords": [
+        "wild",
+        "future",
+        "isn't",
+        "futuristic technology",
+        "present day AI",
+        "what's",
+        "AI integration"
+      ],
+      "reason": "Footage showing a blend of futuristic technology with everyday life can emphasize the statement that AI is not just a future concept but is integrated into our current reality, making the message more relatable and impactful.",
+      "transcript_segment": "Just code."
+    }
+  ],
+  "metadata": {
+    "count": 2,
+    "enhancement_version": "1.0"
+  }
+}
