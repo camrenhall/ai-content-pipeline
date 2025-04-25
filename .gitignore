@@ -6,6 +6,19 @@ __pycache__/
 # C extensions
 *.so
 
+# Video Files
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.flv
+*.wmv
+*.webm
+*.m4v
+*.3gp
+*.3g2
+*.m4a
+
 # Distribution / packaging
 .Python
 build/
