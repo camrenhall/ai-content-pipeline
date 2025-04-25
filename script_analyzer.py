@@ -1,10 +1,11 @@
-# script_analyzer.py
+# improved_script_analyzer.py
 import os
 import assemblyai as aai
 from typing import Dict, List, Optional, Union, Tuple
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+import hashlib
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -19,20 +20,9 @@ class TranscriptSegment:
     speaker: Optional[str] = None
     confidence: float = 1.0
 
-    @property
-    def duration(self) -> float:
-        """Get duration of segment in seconds."""
-        return (self.end - self.start) / 1000.0
-
-    @property
-    def start_seconds(self) -> float:
-        """Get start time in seconds."""
-        return self.start / 1000.0
-
-    @property
-    def end_seconds(self) -> float:
-        """Get end time in seconds."""
-        return self.end / 1000.0
+    def to_dict(self) -> Dict:
+        """Convert segment to dictionary for JSON serialization."""
+        return asdict(self)
 
 
 class Transcript:
@@ -49,37 +39,35 @@ class Transcript:
             self._full_text = " ".join(segment.text for segment in self.segments)
         return self._full_text
     
+    @property
+    def duration_seconds(self) -> float:
+        """Get total duration of the transcript in seconds."""
+        if not self.segments:
+            return 0.0
+        return self.segments[-1].end / 1000.0
+    
     def get_segment_at_time(self, timestamp_seconds: float) -> Optional[TranscriptSegment]:
-        """Find the segment that contains the given timestamp."""
+        """Find the segment that contains the given timestamp (in seconds)."""
+        timestamp_ms = timestamp_seconds * 1000.0
         for segment in self.segments:
-            if segment.start_seconds <= timestamp_seconds <= segment.end_seconds:
+            if segment.start <= timestamp_ms <= segment.end:
                 return segment
         return None
     
-    def get_context(self, timestamp_seconds: float, window_seconds: float = 5.0) -> List[TranscriptSegment]:
-        """Get surrounding context for a timestamp with a window before and after."""
-        context_segments = []
-        for segment in self.segments:
-            # Check if this segment is within our context window
-            if (segment.end_seconds >= timestamp_seconds - window_seconds and 
-                segment.start_seconds <= timestamp_seconds + window_seconds):
-                context_segments.append(segment)
-        return context_segments
+    def to_dict(self) -> Dict:
+        """Convert transcript to dictionary for JSON serialization."""
+        return {
+            "full_text": self.full_text,
+            "segments": [segment.to_dict() for segment in self.segments],
+            "metadata": {
+                "segment_count": len(self.segments),
+                "duration_seconds": self.duration_seconds
+            }
+        }
     
     def to_json(self) -> str:
         """Serialize transcript to JSON."""
-        return json.dumps({
-            "full_text": self.full_text,
-            "segments": [
-                {
-                    "text": s.text,
-                    "start": s.start,
-                    "end": s.end,
-                    "speaker": s.speaker,
-                    "confidence": s.confidence
-                } for s in self.segments
-            ]
-        })
+        return json.dumps(self.to_dict(), indent=2)
     
     @classmethod
     def from_json(cls, json_str: str) -> 'Transcript':
@@ -100,79 +88,16 @@ class Transcript:
         return transcript
     
     def save(self, file_path: str) -> None:
-        """Save transcript to a file."""
+        """Save transcript to a file as JSON."""
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
         with open(file_path, 'w') as f:
             f.write(self.to_json())
     
     @classmethod
     def load(cls, file_path: str) -> 'Transcript':
-        """Load transcript from a file."""
+        """Load transcript from a JSON file."""
         with open(file_path, 'r') as f:
             return cls.from_json(f.read())
-            
-    def to_srt(self) -> str:
-        """
-        Convert transcript to SRT subtitle format.
-        
-        Returns:
-            String containing SRT formatted transcript
-        """
-        srt_lines = []
-        for i, segment in enumerate(self.segments):
-            # Convert milliseconds to SRT time format (HH:MM:SS,mmm)
-            start_time = self._ms_to_srt_time(segment.start)
-            end_time = self._ms_to_srt_time(segment.end)
-            
-            # Add SRT entry
-            srt_lines.append(str(i + 1))
-            srt_lines.append(f"{start_time} --> {end_time}")
-            srt_lines.append(segment.text)
-            srt_lines.append("")  # Empty line between entries
-        
-        return "\n".join(srt_lines)
-    
-    def _ms_to_srt_time(self, ms: float) -> str:
-        """Convert milliseconds to SRT time format (HH:MM:SS,mmm)."""
-        seconds, ms = divmod(ms, 1000)
-        minutes, seconds = divmod(seconds, 60)
-        hours, minutes = divmod(minutes, 60)
-        return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d},{int(ms):03d}"
-    
-    def to_llm_format(self) -> str:
-        """
-        Generate a format optimized for LLM processing with clear timestamps and segments.
-        
-        Returns:
-            String containing LLM-friendly formatted transcript
-        """
-        lines = ["TRANSCRIPT WITH TIMESTAMPS:"]
-        
-        for segment in self.segments:
-            # Format: [MM:SS.mmm - MM:SS.mmm] Text
-            start_min, start_sec = divmod(segment.start / 1000, 60)
-            end_min, end_sec = divmod(segment.end / 1000, 60)
-            
-            time_str = f"[{int(start_min):02d}:{start_sec:06.3f} - {int(end_min):02d}:{end_sec:06.3f}]"
-            
-            # Add speaker label if available
-            if segment.speaker:
-                speaker_str = f" (Speaker: {segment.speaker})"
-            else:
-                speaker_str = ""
-                
-            lines.append(f"{time_str}{speaker_str} {segment.text}")
-        
-        return "\n".join(lines)
-    
-    def save_srt(self, file_path: str) -> None:
-        """Save transcript in SRT format."""
-        with open(file_path, 'w') as f:
-            f.write(self.to_srt())
-    
-    def save_llm_format(self, file_path: str) -> None:
-        """Save transcript in LLM-friendly format."""
-        with open(file_path, 'w') as f:
-            f.write(self.to_llm_format())
 
 
 class ScriptAnalyzer:
@@ -198,6 +123,15 @@ class ScriptAnalyzer:
         
         self.logger = logging.getLogger(__name__)
     
+    def get_cache_path(self, video_path: str, cache_dir: str) -> str:
+        """Generate a consistent cache file path for a given video."""
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        # Create a filename based on the video path (MD5 hash for uniqueness)
+        video_hash = hashlib.md5(video_path.encode()).hexdigest()
+        
+        return os.path.join(cache_dir, f"{video_hash}.transcript.json")
+    
     def analyze(self, video_path: str, 
                 cache_dir: Optional[str] = None,
                 force_refresh: bool = False,
@@ -217,11 +151,7 @@ class ScriptAnalyzer:
         # Check for cached transcript
         transcript_cache_path = None
         if cache_dir:
-            os.makedirs(cache_dir, exist_ok=True)
-            # Create a filename based on the video path
-            import hashlib
-            video_hash = hashlib.md5(video_path.encode()).hexdigest()
-            transcript_cache_path = os.path.join(cache_dir, f"{video_hash}.transcript.json")
+            transcript_cache_path = self.get_cache_path(video_path, cache_dir)
             
             # Check if we have a cached result
             if not force_refresh and os.path.exists(transcript_cache_path):
@@ -239,7 +169,7 @@ class ScriptAnalyzer:
         try:
             transcript = aai.Transcriber(config=config).transcribe(video_path)
             
-            if transcript.status == "error":
+            if hasattr(transcript, 'status') and transcript.status == "error":
                 raise RuntimeError(f"Transcription failed: {transcript.error}")
                 
             # Process the transcript result
@@ -265,7 +195,6 @@ class ScriptAnalyzer:
             'dual_channel': False,
             'language_detection': True,
             'entity_detection': True,
-            # Fix: Update parameter name for speaker diarization
             'speaker_labels': kwargs.get('multiple_speakers', False),
         }
         
@@ -380,12 +309,9 @@ class ScriptAnalyzer:
                     speaker=current_speaker,
                     confidence=1.0
                 ))
-        
-        # [rest of the method with fallbacks remains the same]
-        
-        # Final fallback - just use the full text with estimated timing
         else:
-            full_text = transcript_result.text
+            # Fallback - just use the full text with estimated timing
+            full_text = getattr(transcript_result, 'text', '')
             audio_duration = getattr(transcript_result, 'audio_duration', 0)
             segments.append(TranscriptSegment(
                 text=full_text,
@@ -397,25 +323,29 @@ class ScriptAnalyzer:
         
         transcript = Transcript()
         transcript.segments = segments
-        transcript._full_text = transcript_result.text
+        transcript._full_text = getattr(transcript_result, 'text', ' '.join([s.text for s in segments]))
         return transcript
 
 
-if __name__ == "__main__":
+def parse_args():
+    """Parse command line arguments."""
     import argparse
-
+    
     parser = argparse.ArgumentParser(description='Transcribe a video and output transcript JSON')
     parser.add_argument('video_path', help='Path or URL to the video file')
     parser.add_argument('--api-key', help='AssemblyAI API key (or set ASSEMBLYAI_API_KEY env var)')
     parser.add_argument('--cache-dir', default='./cache', help='Directory to store cached transcripts')
     parser.add_argument('--force-refresh', action='store_true', help='Force re-transcription even if cached')
-    parser.add_argument('--output-json', help='Path to save the transcript JSON')
-    parser.add_argument('--output-srt', help='Path to save the transcript in SRT format')
-    parser.add_argument('--output-llm', help='Path to save the transcript in LLM-friendly format')
+    parser.add_argument('--output-json', help='Path to save the transcript JSON (defaults to cache dir)')
     parser.add_argument('--multiple-speakers', action='store_true', help='Enable speaker diarization')
+    
+    return parser.parse_args()
 
-    args = parser.parse_args()
 
+if __name__ == "__main__":
+    args = parse_args()
+    
+    # Initialize and run analyzer
     analyzer = ScriptAnalyzer(api_key=args.api_key)
     transcript = analyzer.analyze(
         args.video_path,
@@ -423,26 +353,20 @@ if __name__ == "__main__":
         force_refresh=args.force_refresh,
         multiple_speakers=args.multiple_speakers
     )
-
+    
+    # Print summary
     print(f"Transcript contains {len(transcript.segments)} segments")
-    print(f"Total duration: {transcript.segments[-1].end_seconds:.2f} seconds")
+    print(f"Total duration: {transcript.duration_seconds:.2f} seconds")
     print(f"Full text length: {len(transcript.full_text)} characters")
-
-    # Save main JSON file (default to same name as input)
+    
+    # Determine output path (use hash-based cache path by default)
     if args.output_json:
-        json_path = args.output_json
+        # User specified output path
+        output_path = args.output_json
     else:
-        import os
-        base = os.path.splitext(os.path.basename(args.video_path))[0]
-        json_path = os.path.join(args.cache_dir, f"{base}.transcript.json")
-
-    transcript.save(json_path)
-    print(f"Transcript JSON saved to {json_path}")
-
-    if args.output_srt:
-        transcript.save_srt(args.output_srt)
-        print(f"Transcript SRT saved to {args.output_srt}")
-
-    if args.output_llm:
-        transcript.save_llm_format(args.output_llm)
-        print(f"Transcript in LLM format saved to {args.output_llm}")
+        # Use the cache path only
+        output_path = analyzer.get_cache_path(args.video_path, args.cache_dir)
+    
+    # Write transcript to file
+    transcript.save(output_path)
+    print(f"Transcript JSON saved to {output_path}")
