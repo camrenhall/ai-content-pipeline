@@ -10,3 +10,15 @@ python broll_inserter.py --main original.mp4 --output final.mp4 \
 
 FOR SINGLE:
 python moviepy_v2_broll_inserter.py --main original.mp4 --broll broll.mp4 --timestamp 3.0 --duration 3.0 --output output.mp4
+
+FOR SCRIPT ANALYZER:
+python3 script_analyzer.py original.mp4 --api-key bd6316c37712423eb9d502f3e719d68a
+
+FOR BROLL OPPORTUNITY DETECTOR:
+python broll_opportunity_detector.py \
+  --transcript cache/dd5a888ce88cc0f3a0327d21d613f410.transcript.json \
+  --output broll_opportunity_demo.json \
+  --strategy hybrid \
+  --llm-api-url "https://api.openai.com/v1/chat/completions" \
+  --llm-api-key "your-api-key" \
+  --llm-model gpt-4o
