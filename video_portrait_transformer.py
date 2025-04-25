@@ -1,32 +1,71 @@
-# test_ffmpeg_python.py
+# video_transformer.py
 import ffmpeg
 import os
 import sys
+import argparse
+from pathlib import Path
+import logging
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+def is_portrait_1080x1920(video_path):
+    """Check if video is already in 1080x1920 portrait format"""
+    try:
+        probe = ffmpeg.probe(video_path)
+        video_stream = next((stream for stream in probe['streams'] 
+                            if stream['codec_type'] == 'video'), None)
+        
+        if video_stream is None:
+            return False
+            
+        width = int(video_stream['width'])
+        height = int(video_stream['height'])
+        
+        return width == 1080 and height == 1920
+    except Exception as e:
+        logger.error(f"Error checking video dimensions: {str(e)}")
+        return False
 
 def crop_to_portrait(input_path, output_path, width=1080, height=1920):
     """Convert video to portrait (1080x1920)"""
     try:
+        # Check if already in target format
+        if is_portrait_1080x1920(input_path):
+            logger.info(f"Video already in 1080x1920 format, skipping: {input_path}")
+            # Create a symbolic link or copy the file to output_path if needed
+            if input_path != output_path:
+                import shutil
+                shutil.copy2(input_path, output_path)
+                logger.info(f"Copied original file to: {output_path}")
+            return output_path
+        
         # Get video information
-        print(f"Analyzing video: {input_path}")
+        logger.info(f"Analyzing video: {input_path}")
         probe = ffmpeg.probe(input_path)
         video_stream = next((stream for stream in probe['streams'] 
                             if stream['codec_type'] == 'video'), None)
         
         if video_stream is None:
-            print("Error: No video stream found")
+            logger.error("Error: No video stream found")
             return None
             
         orig_width = int(video_stream['width'])
         orig_height = int(video_stream['height'])
-        print(f"Original dimensions: {orig_width}x{orig_height}")
+        logger.info(f"Original dimensions: {orig_width}x{orig_height}")
         
         # Calculate crop width to maintain 9:16 aspect ratio
         target_width = int(orig_height * 9/16)
         crop_x = int((orig_width - target_width) / 2)
-        print(f"Crop parameters: width={target_width}, x={crop_x}")
+        logger.info(f"Crop parameters: width={target_width}, x={crop_x}")
         
         # Process using ffmpeg
-        print(f"Processing video to {output_path}...")
+        logger.info(f"Processing video to {output_path}...")
         
         # Check if audio stream exists
         audio_stream = next((stream for stream in probe['streams'] 
@@ -49,35 +88,73 @@ def crop_to_portrait(input_path, output_path, width=1080, height=1920):
         # Execute the ffmpeg command
         pipeline.overwrite_output().run()
         
-        print(f"Successfully converted video to portrait: {output_path}")
+        logger.info(f"Successfully converted video to portrait: {output_path}")
         return output_path
         
     except ffmpeg.Error as e:
-        print(f"FFmpeg error: {e.stderr.decode() if e.stderr else str(e)}")
+        logger.error(f"FFmpeg error: {e.stderr.decode() if e.stderr else str(e)}")
         return None
     except Exception as e:
-        print(f"Error: {str(e)}")
+        logger.error(f"Error: {str(e)}")
         return None
 
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        input_video = sys.argv[1]
-    else:
-        input_video = "test_video2.mp4"
+def process_videos(input_videos, output_dir=None, width=1080, height=1920):
+    """
+    Process multiple videos, converting them to portrait format
+    
+    Args:
+        input_videos (list): List of video file paths to process
+        output_dir (str, optional): Directory for output videos. If None, uses same directory as input
+        width (int): Target width
+        height (int): Target height
+    
+    Returns:
+        list: Paths to successfully processed videos
+    """
+    successful_outputs = []
+    
+    for input_video in input_videos:
+        input_path = Path(input_video)
         
-    if len(sys.argv) > 2:
-        output_video = sys.argv[2]
-    else:
-        output_video = "test_video_portrait2.mp4"
+        if not input_path.exists():
+            logger.error(f"Error: Input video not found at {input_path}")
+            continue
+            
+        # Determine output path
+        if output_dir:
+            output_path = Path(output_dir) / f"{input_path.stem}_portrait{input_path.suffix}"
+            os.makedirs(output_dir, exist_ok=True)
+        else:
+            output_path = input_path.with_name(f"{input_path.stem}_portrait{input_path.suffix}")
+            
+        # Process the video
+        result = crop_to_portrait(str(input_path), str(output_path), width, height)
+        
+        if result:
+            successful_outputs.append(result)
+            logger.info(f"Video processing complete. Output saved to: {result}")
+        else:
+            logger.error(f"Video processing failed for: {input_path}")
     
-    if not os.path.exists(input_video):
-        print(f"Error: Input video not found at {input_video}")
+    return successful_outputs
+
+def main():
+    # Create a parser without adding the height argument initially
+    parser = argparse.ArgumentParser(description='Convert videos to portrait format (1080x1920)')
+    parser.add_argument('input', nargs='+', help='Input video file(s)')
+    parser.add_argument('-o', '--output-dir', help='Output directory (optional)')
+    parser.add_argument('-w', '--width', type=int, default=1080, help='Target width (default: 1080)')
+    parser.add_argument('--height', type=int, default=1920, help='Target height (default: 1920)')
+    
+    args = parser.parse_args()
+    
+    successful_outputs = process_videos(args.input, args.output_dir, args.width, args.height)
+    
+    logger.info(f"Completed processing {len(successful_outputs)} of {len(args.input)} videos")
+    
+    if not successful_outputs:
+        logger.error("All video processing operations failed")
         sys.exit(1)
-    
-    result = crop_to_portrait(input_video, output_video)
-    
-    if result:
-        print(f"Video processing complete. Output saved to: {result}")
-    else:
-        print("Video processing failed.")
-        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
