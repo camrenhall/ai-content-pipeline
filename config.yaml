@@ -69,3 +69,54 @@ fast:
   max_broll_opportunities: 3
   max_results_per_query: 3
   parallel_execution: true
+
+  post_processing:
+  # Enable/disable specific post-processing steps
+  enabled: true
+  steps:
+    - sound_effects
+    # Uncomment these as they are implemented
+    # - video_transitions
+    # - zoom_effects
+    # - captioning
+  
+  # Sound effects configuration
+  sound_effects:
+    sound_effects_dir: "./assets/sound_effects"
+    fade_duration: 0.3
+    volume: 0.7
+    max_sounds_per_video: 5
+    min_gap: 3.0
+  
+  # Video transitions configuration (placeholder for future implementation)
+  video_transitions:
+    enabled: false
+    transition_types:
+      - fade
+      - wipe
+      - dissolve
+    default_duration: 0.5
+  
+  # Zoom effects configuration (placeholder for future implementation)
+  zoom_effects:
+    enabled: false
+    zoom_intensity: 1.2
+    zoom_duration: 1.5
+    
+  # Captioning configuration (placeholder for future implementation)
+  captioning:
+    enabled: false
+    api_url: ""
+    api_key: ""
+    font_size: 16
+    position: "bottom"
+
+  # Background music configuration
+  background_music:
+    enabled: true
+    music_dir: "./assets/background_music"
+    volume: 0.15
+    ducking: 0.5
+    smart_ducking: true
+    fade_in: 2.0
+    fade_out: 3.0

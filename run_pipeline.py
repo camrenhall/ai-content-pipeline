@@ -174,6 +174,13 @@ def main():
                                 'transform_videos', 'assemble_video'],
                        help='End pipeline at this step')
     
+    # Post-processing options
+    parser.add_argument('--post-process', action='store_true', 
+                    help='Apply post-processing effects')
+    parser.add_argument('--post-process-steps', nargs='+', 
+                   choices=['sound_effects', 'background_music', 'video_transitions', 'zoom_effects', 'captioning'],
+                   help='Specific post-processing steps to apply')
+    
     # Execution options
     parser.add_argument('--force-refresh', action='store_true', 
                        help='Force refresh and ignore cache')
