@@ -4,11 +4,11 @@
       "timestamp": 1.7,
       "duration": 3.0,
       "keywords": [
-        "AI technology",
-        "robotic arm",
-        "digital interface"
+        "AI writing",
+        "AI voiceover",
+        "AI editing"
       ],
-      "reason": "This segment discusses AI's role in creating the video, which can be visually reinforced with footage of AI technology or digital interfaces.",
+      "reason": "Visuals of AI software interfaces or animations showing AI writing, voiceover, and editing processes would effectively illustrate the concept of AI handling these tasks, enhancing the viewer's understanding of AI's capabilities.",
       "transcript_segment": "It was written, voiced and edited entirely by AI no crew,",
       "path": ""
     },
@@ -16,17 +16,21 @@
       "timestamp": 8.55,
       "duration": 3.0,
       "keywords": [
-        "isn't",
         "wild",
-        "modern AI",
-        "what's",
         "future",
-        "futuristic city",
-        "technology now"
+        "isn't",
+        "futuristic technology",
+        "present day AI",
+        "what's",
+        "AI integration"
       ],
-      "reason": "LLM: The phrase 'this isn't the future, it's right now' can be enhanced with visuals of modern technology or a futuristic cityscape to highlight the current state of AI advancements. | Rule: Located at natural transition point (53% through video)",
-      "transcript_segment": "",
+      "reason": "Footage showing a blend of futuristic technology with everyday life can emphasize the statement that AI is not just a future concept but is integrated into our current reality, making the message more relatable and impactful.",
+      "transcript_segment": "Just code.",
       "path": ""
     }
-  ]
+  ],
+  "metadata": {
+    "count": 2,
+    "detection_version": "1.0"
+  }
 }

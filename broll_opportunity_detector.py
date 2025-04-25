@@ -112,7 +112,10 @@ class BRollOpportunityDetector:
             raise ValueError(f"Unknown detection strategy: {strategy}")
         
         # Apply post-processing to ensure opportunities meet requirements
-        opportunities = self._post_process_opportunities(opportunities)
+        opportunities = self._post_process_opportunities(opportunities, transcript)
+        
+        # Ensure all opportunities have complete information
+        opportunities = self._ensure_complete_opportunities(opportunities, transcript)
         
         # Cache the results if needed
         if cache_path:
@@ -349,18 +352,21 @@ class BRollOpportunityDetector:
                     # Combine them by taking the higher score and merging keywords and reasons
                     overlapping = True
                     if llm_opp.score > existing_opp.score:
+                        # Create a hybrid reason WITHOUT the prefixes
+                        hybrid_reason = llm_opp.reason
+                        
                         # Update the existing opportunity with the better data
                         all_opps[i] = BRollOpportunity(
                             timestamp=llm_opp.timestamp,  # Use LLM's timestamp if score is higher
                             duration=max(existing_opp.duration, llm_opp.duration),  # Take the longer duration
                             score=max(existing_opp.score, llm_opp.score) + 0.1,  # Boost score slightly for hybrid matches
                             keywords=list(set(existing_opp.keywords + llm_opp.keywords)),  # Combine keywords
-                            reason=f"LLM: {llm_opp.reason} | Rule: {existing_opp.reason}",
+                            reason=hybrid_reason,  # Clean reason from LLM
                             transcript_segment=llm_opp.transcript_segment  # Prefer LLM's segment
                         )
                     break
             
-            # If no overlap, add the LLM opportunity
+            # If no overlap, add the LLM opportunity directly
             if not overlapping:
                 all_opps.append(llm_opp)
         
@@ -369,7 +375,7 @@ class BRollOpportunityDetector:
         
         return all_opps
     
-    def _post_process_opportunities(self, opportunities: List[BRollOpportunity]) -> List[BRollOpportunity]:
+    def _post_process_opportunities(self, opportunities: List[BRollOpportunity], transcript: Transcript) -> List[BRollOpportunity]:
         """
         Apply post-processing to refine the opportunities.
         
@@ -378,12 +384,16 @@ class BRollOpportunityDetector:
         2. Limiting to max_opportunities
         3. Adjusting durations to be within bounds
         4. Ensuring no temporal conflicts
+        5. Ensuring B-roll doesn't extend beyond video duration
         """
         if not opportunities:
             return []
         
         # Sort by score (highest first)
         sorted_opps = sorted(opportunities, key=lambda x: x.score, reverse=True)
+        
+        # Get total video duration
+        video_duration = transcript.duration_seconds
         
         # Take the top opportunities while ensuring minimum separation
         filtered_opps = []
@@ -401,8 +411,18 @@ class BRollOpportunityDetector:
                 # Adjust duration to be within bounds
                 duration = max(min(opp.duration, self.max_opportunity_duration), self.min_opportunity_duration)
                 
+                # Ensure B-roll doesn't extend beyond video duration
+                timestamp = opp.timestamp
+                if timestamp + duration > video_duration:
+                    # Adjust duration to end exactly at video end
+                    duration = max(video_duration - timestamp, self.min_opportunity_duration)
+                    
+                    # If the adjusted duration is too short, don't use this opportunity
+                    if duration < self.min_opportunity_duration:
+                        continue
+                
                 adjusted_opp = BRollOpportunity(
-                    timestamp=opp.timestamp,
+                    timestamp=timestamp,
                     duration=duration,
                     score=opp.score,
                     keywords=opp.keywords,
@@ -473,43 +493,46 @@ class BRollOpportunityDetector:
     def _create_llm_prompt(self, formatted_transcript: str, video_duration: float) -> str:
         """Create the prompt for the LLM."""
         return f"""
-You are an expert video editor who understands effective B-roll placement. You are analyzing a video transcript to identify the best 3-5 places to insert B-roll footage. B-roll is supplementary footage that enriches the main video by providing visual context, emphasizing points, or breaking monotony.
+            You are an expert video editor who understands effective B-roll placement. You are analyzing a video transcript to identify the best 3-5 places to insert B-roll footage. B-roll is supplementary footage that enriches the main video by providing visual context, emphasizing points, or breaking monotony.
 
-The transcript below shows text segments with their timestamps (in seconds).
+            The transcript below shows text segments with their timestamps (in seconds).
 
-TRANSCRIPT:
-{formatted_transcript}
+            TRANSCRIPT:
+            {formatted_transcript}
 
-TOTAL VIDEO DURATION: {video_duration:.2f} seconds
+            TOTAL VIDEO DURATION: {video_duration:.2f} seconds
 
-Identify 3-5 specific points in this video where B-roll would be most effective, considering:
-1. Natural pauses or transitions between topics
-2. Points where visual illustration would enhance understanding
-3. Statements that would benefit from visual reinforcement
-4. Places where breaking the "talking head" format would maintain viewer engagement
-5. Key concepts or examples that could be visualized
-6. Ensure at least {self.min_separation} seconds between B-roll placement points
+            Identify 3-5 specific points in this video where B-roll would be most effective, considering:
+            1. Natural pauses or transitions between topics
+            2. Points where visual illustration would enhance understanding
+            3. Statements that would benefit from visual reinforcement
+            4. Places where breaking the "talking head" format would maintain viewer engagement
+            5. Key concepts or examples that could be visualized
+            6. Ensure at least {self.min_separation} seconds between B-roll placement points
+            7. IMPORTANT: Make sure that a B-roll insertion point plus its duration does not exceed the total video duration of {video_duration:.2f} seconds
 
-For each recommended B-roll opportunity, provide:
-1. Timestamp (in seconds) to insert the B-roll
-2. Suggested duration (between {self.min_opportunity_duration} and {self.max_opportunity_duration} seconds)
-3. Keywords to search for appropriate B-roll content
-4. Brief justification for why this is a good point for B-roll
+            For each recommended B-roll opportunity, provide:
+            1. Timestamp (in seconds) to insert the B-roll
+            2. Suggested duration (between {self.min_opportunity_duration} and {self.max_opportunity_duration} seconds, and ensuring timestamp + duration <= {video_duration:.2f})
+            3. Keywords to search for appropriate B-roll content (be specific and descriptive)
+            4. A detailed justification for why B-roll would be effective at this point
 
-Format your response as valid JSON with this structure:
-{{
-  "opportunities": [
-    {{
-      "timestamp": 12.4,
-      "duration": 2.5,
-      "keywords": ["example", "keyword1", "keyword2"],
-      "reason": "Brief explanation for this B-roll placement"
-    }}
-  ]
-}}
+            Your "reason" field must be extremely clear and descriptive. Write a complete sentence that explicitly describes what kind of visuals would work best here and why they enhance the content. This reason will be used by another AI to search for and select appropriate B-roll footage, so make it as helpful and specific as possible.
 
-Focus only on the most impactful opportunities for B-roll insertion.
-"""
+            Format your response as valid JSON with this structure:
+            {{
+            "opportunities": [
+                {{
+                "timestamp": 12.4,
+                "duration": 2.5,
+                "keywords": ["specific keyword 1", "specific keyword 2", "specific keyword 3"],
+                "reason": "A detailed, specific explanation of what kind of visuals would enhance this moment and why."
+                }}
+            ]
+            }}
+
+            Focus only on the most impactful opportunities for B-roll insertion.
+            """
     
     def _call_llm_api(self, prompt: str) -> Dict[str, Any]:
         """Call the LLM API with the prompt."""
@@ -554,17 +577,64 @@ Focus only on the most impactful opportunities for B-roll insertion.
         opportunities = []
         
         try:
+            # Get the video duration from the transcript
+            video_duration = transcript.duration_seconds
+            
             # Extract opportunities from the response
             if "opportunities" in llm_response:
                 for opp_data in llm_response["opportunities"]:
                     timestamp = float(opp_data.get("timestamp", 0))
                     duration = float(opp_data.get("duration", 2.0))
+                    
+                    # Validate timestamp and duration are within video bounds
+                    if timestamp < 0 or timestamp >= video_duration:
+                        self.logger.warning(f"Discarding opportunity with invalid timestamp: {timestamp}")
+                        continue
+                        
+                    # If duration extends beyond video end, adjust it
+                    if timestamp + duration > video_duration:
+                        duration = video_duration - timestamp
+                        self.logger.info(f"Adjusted duration to {duration} to prevent exceeding video length")
+                        
+                        # If adjusted duration is too short, skip this opportunity
+                        if duration < self.min_opportunity_duration:
+                            self.logger.warning(f"Discarding opportunity that cannot fit minimum duration")
+                            continue
+                    
                     keywords = opp_data.get("keywords", [])
                     reason = opp_data.get("reason", "")
                     
                     # Find the corresponding transcript segment
                     segment = transcript.get_segment_at_time(timestamp)
                     segment_text = segment.text if segment else ""
+                    
+                    # If we couldn't find a segment at the exact timestamp, look nearby
+                    if not segment_text:
+                        # Look for the nearest segment
+                        nearest_segment = None
+                        nearest_distance = float('inf')
+                        
+                        for seg in transcript.segments:
+                            seg_mid_time = (seg.start + seg.end) / 2000.0  # Convert to seconds
+                            distance = abs(seg_mid_time - timestamp)
+                            
+                            if distance < nearest_distance:
+                                nearest_distance = distance
+                                nearest_segment = seg
+                        
+                        if nearest_segment and nearest_distance < 3.0:  # Within 3 seconds
+                            segment_text = nearest_segment.text
+                            
+                    # If still no segment text, use the full text (last resort)
+                    if not segment_text:
+                        # Take a short excerpt from the full text around this point
+                        relative_pos = timestamp / video_duration
+                        words = transcript.full_text.split()
+                        if words:
+                            approx_word_index = int(relative_pos * len(words))
+                            start_index = max(0, approx_word_index - 5)
+                            end_index = min(len(words), approx_word_index + 5)
+                            segment_text = " ".join(words[start_index:end_index])
                     
                     # If no keywords provided, extract them
                     if not keywords and segment_text:
@@ -576,13 +646,82 @@ Focus only on the most impactful opportunities for B-roll insertion.
                         duration=duration,
                         score=0.8,  # Give LLM opportunities a high base score
                         keywords=keywords,
-                        reason=reason,
-                        transcript_segment=segment_text
+                        reason=reason,  # Clean reason
+                        transcript_segment=segment_text  # Ensure there's always segment text
                     ))
+            
         except Exception as e:
             self.logger.error(f"Error parsing LLM response: {e}")
             
         return opportunities
+    
+    def _ensure_complete_opportunities(self, opportunities: List[BRollOpportunity], transcript: Transcript) -> List[BRollOpportunity]:
+        """Ensure that all opportunities have complete information."""
+        complete_opps = []
+        
+        for opp in opportunities:
+            # Copy the opportunity to avoid modifying the original
+            new_opp = BRollOpportunity(
+                timestamp=opp.timestamp,
+                duration=opp.duration,
+                score=opp.score,
+                keywords=opp.keywords.copy() if opp.keywords else [],
+                reason=opp.reason,
+                transcript_segment=opp.transcript_segment
+            )
+            
+            # Ensure transcript segment is not empty
+            if not new_opp.transcript_segment:
+                segment = transcript.get_segment_at_time(new_opp.timestamp)
+                if segment:
+                    new_opp.transcript_segment = segment.text
+                else:
+                    # Find nearest segment if exact match not found
+                    nearest_segment = None
+                    nearest_distance = float('inf')
+                    
+                    for seg in transcript.segments:
+                        seg_mid_time = (seg.start + seg.end) / 2000.0  # Convert to seconds
+                        distance = abs(seg_mid_time - new_opp.timestamp)
+                        
+                        if distance < nearest_distance:
+                            nearest_distance = distance
+                            nearest_segment = seg
+                    
+                    if nearest_segment:
+                        new_opp.transcript_segment = nearest_segment.text
+                    else:
+                        # Last resort: take a short excerpt from the full transcript
+                        relative_pos = new_opp.timestamp / transcript.duration_seconds
+                        words = transcript.full_text.split()
+                        if words:
+                            approx_word_index = int(relative_pos * len(words))
+                            start_index = max(0, approx_word_index - 5)
+                            end_index = min(len(words), approx_word_index + 5)
+                            new_opp.transcript_segment = " ".join(words[start_index:end_index])
+            
+            # Ensure keywords are not empty
+            if not new_opp.keywords and new_opp.transcript_segment:
+                new_opp.keywords = self._extract_keywords(new_opp.transcript_segment)
+            
+            # Remove any "LLM:" or "Rule:" prefixes from the reason
+            if new_opp.reason:
+                # Remove prefixes like "LLM: " or "Rule: "
+                new_opp.reason = new_opp.reason.replace("LLM: ", "").replace("Rule: ", "")
+                
+                # Remove the pattern "| Rule: something"
+                if " | Rule: " in new_opp.reason:
+                    new_opp.reason = new_opp.reason.split(" | Rule: ")[0]
+                    
+                # Ensure the reason is detailed enough
+                if len(new_opp.reason.split()) < 10:
+                    # If the reason is too short, expand it based on the transcript segment
+                    if new_opp.transcript_segment:
+                        new_opp.reason += f" This moment discusses '{new_opp.transcript_segment}' which can be visually enhanced with B-roll footage that illustrates these concepts."
+            
+            complete_opps.append(new_opp)
+        
+        return complete_opps
     
     def export_to_json(self, opportunities: List[BRollOpportunity], output_path: str) -> None:
         """
@@ -611,10 +750,19 @@ Focus only on the most impactful opportunities for B-roll insertion.
                     "path": ""
                 })
             
+            # Create output structure
+            output_data = {
+                "broll_cuts": broll_cuts,
+                "metadata": {
+                    "count": len(opportunities),
+                    "detection_version": "1.0"
+                }
+            }
+            
             # Save to file
             with open(output_path, 'w') as f:
-                json.dump({"broll_cuts": broll_cuts}, f, indent=2)
-                
+                json.dump(output_data, f, indent=2)
+                    
             self.logger.info(f"Exported {len(opportunities)} B-roll opportunities to {output_path}")
             return True
         except Exception as e:
