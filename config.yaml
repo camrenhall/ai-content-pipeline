@@ -1,0 +1,71 @@
+# Base configuration for content pipeline
+# This file contains configurations for the automated content pipeline
+# Secrets are stored separately in secrets.properties
+
+# Default profile (base configuration)
+default:
+  # General settings
+  cache_dir: "./cache"
+  temp_dir: "./tmp"
+  
+  # Secrets configuration
+  secrets_file: "secrets.properties"
+  
+  # LLM configuration
+  llm_model: "gpt-4o"
+  
+  # B-roll detection settings
+  broll_detection_strategy: "hybrid"  # Options: "rule_based", "llm_based", "hybrid"
+  min_broll_separation: 4.0           # Minimum seconds between B-roll insertions
+  max_broll_opportunities: 5          # Maximum number of B-roll opportunities to detect
+  min_broll_duration: 1.5             # Minimum duration for B-roll (seconds)
+  max_broll_duration: 4.0             # Maximum duration for B-roll (seconds)
+  
+  # Keyword extraction settings
+  use_llm_for_keywords: true
+  keyword_extraction_workers: 4
+  
+  # Video retrieval settings
+  min_video_resolution: [1080, 1080]  # Minimum resolution (width, height)
+  max_results_per_query: 5
+  max_concurrent_requests: 3
+  max_download_retries: 3
+  
+  # Video transformation settings
+  target_video_width: 1080
+  target_video_height: 1920
+  
+  # Pipeline execution settings
+  retry_delay_base: 2                 # Base for exponential backoff (seconds)
+  max_retries_per_step: 3             # Maximum retries per step
+
+# Development profile
+development:
+  cache_dir: "./dev_cache"
+  max_broll_opportunities: 2          # Reduced for faster development testing
+  use_llm_for_keywords: false         # Use rule-based approach for faster development
+  max_results_per_query: 2
+
+# Production profile
+production:
+  cache_dir: "/data/pipeline_cache"
+  max_retries_per_step: 5             # More retries for production reliability
+  max_broll_opportunities: 8          # More opportunities for production quality
+  retry_delay_base: 5                 # Longer backoff time for production stability
+
+# High-quality profile
+high_quality:
+  llm_model: "gpt-4o"                 # Use most capable model
+  broll_detection_strategy: "llm_based"
+  max_broll_opportunities: 10
+  max_results_per_query: 8
+  target_video_width: 1080
+  target_video_height: 1920
+
+# Fast processing profile
+fast:
+  broll_detection_strategy: "rule_based"
+  use_llm_for_keywords: false
+  max_broll_opportunities: 3
+  max_results_per_query: 3
+  parallel_execution: true
