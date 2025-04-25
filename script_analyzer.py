@@ -402,10 +402,9 @@ class ScriptAnalyzer:
 
 
 if __name__ == "__main__":
-    # Example usage
     import argparse
-    
-    parser = argparse.ArgumentParser(description='Transcribe a video and extract the script')
+
+    parser = argparse.ArgumentParser(description='Transcribe a video and output transcript JSON')
     parser.add_argument('video_path', help='Path or URL to the video file')
     parser.add_argument('--api-key', help='AssemblyAI API key (or set ASSEMBLYAI_API_KEY env var)')
     parser.add_argument('--cache-dir', default='./cache', help='Directory to store cached transcripts')
@@ -414,38 +413,36 @@ if __name__ == "__main__":
     parser.add_argument('--output-srt', help='Path to save the transcript in SRT format')
     parser.add_argument('--output-llm', help='Path to save the transcript in LLM-friendly format')
     parser.add_argument('--multiple-speakers', action='store_true', help='Enable speaker diarization')
-    
+
     args = parser.parse_args()
-    
+
     analyzer = ScriptAnalyzer(api_key=args.api_key)
     transcript = analyzer.analyze(
-        args.video_path, 
+        args.video_path,
         cache_dir=args.cache_dir,
         force_refresh=args.force_refresh,
         multiple_speakers=args.multiple_speakers
     )
-    
-    # Print summary
+
     print(f"Transcript contains {len(transcript.segments)} segments")
     print(f"Total duration: {transcript.segments[-1].end_seconds:.2f} seconds")
     print(f"Full text length: {len(transcript.full_text)} characters")
-    
-    # Save to files if requested
+
+    # Save main JSON file (default to same name as input)
     if args.output_json:
-        transcript.save(args.output_json)
-        print(f"Transcript JSON saved to {args.output_json}")
-        
+        json_path = args.output_json
+    else:
+        import os
+        base = os.path.splitext(os.path.basename(args.video_path))[0]
+        json_path = os.path.join(args.cache_dir, f"{base}.transcript.json")
+
+    transcript.save(json_path)
+    print(f"Transcript JSON saved to {json_path}")
+
     if args.output_srt:
         transcript.save_srt(args.output_srt)
         print(f"Transcript SRT saved to {args.output_srt}")
-        
+
     if args.output_llm:
         transcript.save_llm_format(args.output_llm)
         print(f"Transcript in LLM format saved to {args.output_llm}")
-        
-    # If no output formats were specified, print a sample in the LLM format
-    if not (args.output_json or args.output_srt or args.output_llm):
-        print("\nSample of transcript in LLM-friendly format:")
-        sample_lines = transcript.to_llm_format().split("\n")[:10]  # First 10 lines
-        print("\n".join(sample_lines))
-        print("...")
