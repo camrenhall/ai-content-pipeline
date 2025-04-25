@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 import logging
 
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
