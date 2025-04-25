@@ -22,3 +22,13 @@ python broll_opportunity_detector.py \
   --llm-api-url "https://api.openai.com/v1/chat/completions" \
   --llm-api-key "your-api-key" \
   --llm-model gpt-4o
+
+  FOR KEYWORD EXTRACTOR:
+
+  python keyword_extractor.py \
+  --input broll_opportunity_demo.json \
+  --output enhanced_broll_keywords.json \
+  --llm-api-url "https://api.openai.com/v1/chat/completions" \
+  --llm-api-key "your-api-key" \
+  --llm-model gpt-4o \
+  --cache-dir "./cache"
