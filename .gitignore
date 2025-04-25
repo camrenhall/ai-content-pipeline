@@ -3,7 +3,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Cache directories
 cache/
+tmp/
+
+# Secrets file - NEVER commit this
+secrets.properties
+.env
 
 # C extensions
 *.so

@@ -32,3 +32,7 @@ python broll_opportunity_detector.py \
   --llm-api-key "your-api-key" \
   --llm-model gpt-4o \
   --cache-dir "./cache"
+
+  FOR VIDEO ASSET RETRIEVER
+
+  
