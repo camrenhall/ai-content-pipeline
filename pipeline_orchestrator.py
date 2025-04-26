@@ -31,6 +31,7 @@ try:
     from video_asset_retriever import VideoAssetRetriever
     from video_portrait_transformer import crop_to_portrait
     from enhanced_broll_inserter import insert_multiple_brolls, save_edited_video
+    from post_processing_orchestrator import PostProcessingOrchestrator
     from moviepy import VideoFileClip
 except ImportError as e:
     logger.error(f"Failed to import pipeline components: {e}")
@@ -325,6 +326,11 @@ class PipelineOrchestrator:
                 name="assemble_video",
                 function=self._assemble_video,
                 dependencies=["transform_videos"]
+            ),
+            "post_process": PipelineStep(
+                name="post_process",
+                function=self._apply_post_processing,
+                dependencies=["assemble_video"]
             )
         }
     
@@ -1060,6 +1066,72 @@ class PipelineOrchestrator:
                 "success": False,
                 "error": str(e)
             }
+            
+    def _apply_post_processing(self, context: PipelineContext) -> Dict[str, Any]:
+        """Step 7: Apply post-processing effects to the assembled video."""
+        logger.info("Applying post-processing effects")
+        
+        # Get result from previous step
+        assembly_result = context.intermediate_outputs.get("assemble_video")
+        if not assembly_result:
+            raise ValueError("Video assembly result not found in context")
+        
+        # Get paths
+        input_video_path = assembly_result["output_video_path"]
+        if not os.path.exists(input_video_path):
+            raise ValueError(f"Assembled video not found at {input_video_path}")
+        
+        # Get B-roll data path from previous steps
+        retrieval_result = context.intermediate_outputs.get("retrieve_videos")
+        if not retrieval_result:
+            raise ValueError("Video retrieval result not found in context")
+        
+        broll_data_path = retrieval_result["retrieved_videos_path"]
+        
+        # Determine output path
+        output_video_path = os.path.join(
+            os.path.dirname(context.output_video_path),
+            f"{Path(context.output_video_path).stem}_post{Path(context.output_video_path).suffix}"
+        )
+        
+        # Create post-processing cache directory
+        post_processing_cache_dir = os.path.join(context.cache_dir, "post_processing")
+        os.makedirs(post_processing_cache_dir, exist_ok=True)
+        
+        # Get post-processing configuration
+        post_processing_config = context.config.get("post_processing", {})
+        
+        # Initialize orchestrator
+        orchestrator = PostProcessingOrchestrator(
+            config=post_processing_config,
+            cache_dir=post_processing_cache_dir,
+            sound_effects_dir=context.config.get("post_processing", {}).get(
+                "sound_effects_dir", "./assets/sound_effects"
+            )
+        )
+        
+        # Run post-processing
+        final_output_path = orchestrator.process(
+            input_video_path=input_video_path,
+            broll_data_path=broll_data_path,
+            output_video_path=output_video_path,
+            steps=post_processing_config.get("steps", None)
+        )
+        
+        # Store artifact path
+        self.steps["post_processing"].artifacts["post_processed_video_path"] = final_output_path
+        
+        # Update the final output video path in context
+        context.output_video_path = final_output_path
+        
+        # Return results
+        return {
+            "input_video_path": input_video_path,
+            "output_video_path": final_output_path,
+            "broll_data_path": broll_data_path,
+            "applied_steps": post_processing_config.get("steps", ["sound_effects"]),
+            "success": os.path.exists(final_output_path)
+        }
 
 
 def main():
