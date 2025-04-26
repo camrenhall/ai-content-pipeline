@@ -1,593 +1,637 @@
-# sound_effect_manager.py
-import os
+# SoundEffectManager.py
 import json
-import random
+import os
+import argparse
 import logging
-import hashlib
-from typing import Dict, List, Optional, Tuple, Union
+import subprocess
+import tempfile
 from pathlib import Path
-from dataclasses import dataclass, field
-from moviepy.editor import AudioFileClip, VideoFileClip, CompositeAudioClip
-from pydub import AudioSegment
+from typing import Dict, List, Any, Optional, Tuple, Union
+from dataclasses import dataclass
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+import ffmpeg
+from pydub import AudioSegment
+from pydub.utils import make_chunks
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('SoundEffectManager')
+
 
 @dataclass
 class SoundEffect:
-    """Represents a single sound effect with metadata."""
-    name: str
-    path: str
-    category: str
-    duration: float
-    energy_level: str  # 'low', 'medium', 'high'
-    tags: List[str] = field(default_factory=list)
-    
-    def load_audio(self) -> AudioFileClip:
-        """Load the audio file as a MoviePy AudioFileClip."""
-        return AudioFileClip(self.path)
-    
-    def load_pydub(self) -> AudioSegment:
-        """Load the audio file as a PyDub AudioSegment for advanced processing."""
-        return AudioSegment.from_file(self.path)
-
-@dataclass
-class TransitionPoint:
-    """Represents a point in the video where a sound effect should be added."""
-    timestamp: float  # seconds from start of video
-    duration: float   # duration of the B-roll segment
-    transition_type: str  # 'in', 'out', or 'both'
-    context: Dict     # contains additional info about the transition point
-    
-    @property
-    def exit_point(self) -> float:
-        """Calculate the exit point (when B-roll ends)."""
-        return self.timestamp + self.duration
+    """Represents a sound effect to be added to the video."""
+    timestamp: float  # When to insert the sound (seconds)
+    duration: float   # Duration of the sound effect (seconds)
+    type: str         # Type of sound effect (transition_in, transition_out, ambient)
+    sound_file_path: str  # Path to the sound effect file
+    volume_scale: float = 1.0  # Scale factor for volume
 
 
 class SoundEffectManager:
     """
-    Manages the loading, selection, and application of sound effects 
-    for B-roll transitions in videos.
+    Manages the application of sound effects to videos based on opportunities detected.
+    Uses FFmpeg for precise audio mixing and PyDub for advanced audio manipulation.
     """
-    
-    def __init__(
-        self,
-        sound_effects_dir: str = "./assets/sound_effects",
-        cache_dir: Optional[str] = "./cache/sound_effects",
-        fade_duration: float = 0.3,  # seconds
-        volume_adjustment: float = 0.7,  # relative to original audio
-        max_sounds_per_video: int = 5,  # avoid repetitive sound usage
-        min_gap_between_effects: float = 3.0,  # minimum seconds between sound effects
-    ):
+
+    def __init__(self, 
+                 video_path: Optional[str] = None,
+                 output_path: Optional[str] = None,
+                 opportunities_path: Optional[str] = None,
+                 global_volume_scale: float = 1.0):
         """
         Initialize the SoundEffectManager.
-        
+
         Args:
-            sound_effects_dir: Directory containing sound effect files
-            cache_dir: Directory to cache processed audio
-            fade_duration: Duration in seconds for fading sound effects
-            volume_adjustment: Volume level for sound effects relative to original audio
-            max_sounds_per_video: Maximum number of times to use the same sound in a video
-            min_gap_between_effects: Minimum seconds between sound effects
+            video_path: Path to the video file to enhance
+            output_path: Path where the enhanced video will be saved
+            opportunities_path: Path to the JSON file with sound effect opportunities
+            global_volume_scale: Global volume scale for all sound effects (0.0-2.0)
         """
-        self.sound_effects_dir = sound_effects_dir
-        self.cache_dir = cache_dir
-        self.fade_duration = fade_duration
-        self.volume_adjustment = volume_adjustment
-        self.max_sounds_per_video = max_sounds_per_video
-        self.min_gap_between_effects = min_gap_between_effects
-        
-        # Create cache directory if needed
-        if self.cache_dir:
-            os.makedirs(self.cache_dir, exist_ok=True)
-        
-        # Dictionary to store loaded sound effects by category
-        self.sound_effects: Dict[str, List[SoundEffect]] = {}
-        
-        # Load sound effects
-        self._load_sound_effects()
-        
-        # Keep track of used sounds to prevent repetition
-        self.used_sounds = {}
-        
-        # Set up logging
-        self.logger = logging.getLogger(__name__)
-    
-    def _load_sound_effects(self) -> None:
+        self.video_path = video_path
+        self.output_path = output_path
+        self.opportunities_path = opportunities_path
+        self.global_volume_scale = global_volume_scale
+        self.sound_effects: List[SoundEffect] = []
+        self.temp_files: List[str] = []
+        self.video_info: Dict[str, Any] = {}
+
+    def load_opportunities(self, opportunities_path: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Load sound effects from the specified directory.
-        
-        The expected structure is:
-        - sound_effects_dir/
-        - whooshes/
-            - swoosh_fast_bright.mp3
-        - impacts/
-            - impact_heavy_reverb.mp3
-        - stingers/
-            - stinger_upbeat.mp3
-        - ui/
-            - click_clean.mp3
-        - foley/
-            - footstep_concrete.mp3
-        
-        Each directory name is treated as a category.
+        Load sound effect opportunities from a JSON file.
+
+        Args:
+            opportunities_path: Path to the opportunities JSON file (overrides constructor path)
+
+        Returns:
+            List of sound effect opportunities
         """
-        base_dir = Path(self.sound_effects_dir)
+        path = opportunities_path or self.opportunities_path
+        if not path:
+            raise ValueError("No opportunities path provided")
+
+        try:
+            with open(path, 'r') as f:
+                data = json.load(f)
+                
+            # Extract opportunities from the JSON structure
+            opportunities = data.get('sound_effect_opportunities', [])
+            logger.info(f"Loaded {len(opportunities)} sound effect opportunities from {path}")
+            return opportunities
         
-        if not base_dir.exists():
-            self.logger.warning(f"Sound effects directory not found: {base_dir}")
-            
-            # Create base directory and example structure with README
-            os.makedirs(base_dir, exist_ok=True)
-            
-            # Create example category directories with our new structure
-            categories = ["whooshes", "impacts", "stingers", "ui", "foley"]
-            for category in categories:
-                os.makedirs(base_dir / category, exist_ok=True)
-            
-            # Create a README file explaining the directory structure
-            readme_path = base_dir / "README.md"
-            with open(readme_path, "w") as f:
-                f.write("# Sound Effects Directory\n\n")
-                f.write("Place your sound effect files in the appropriate subdirectories:\n\n")
-                f.write("- `whooshes/`: Transition sounds, movement effects, and swooshes\n")
-                f.write("- `impacts/`: Sounds for ending transitions and emphasis points\n")
-                f.write("- `stingers/`: Short musical accents and transitions\n")
-                f.write("- `ui/`: Interface sounds, clicks, and notifications\n")
-                f.write("- `foley/`: Real-world sounds for added realism\n")
-                f.write("\nFile naming convention: `type_attribute1_attribute2.mp3`\n")
-                f.write("Example: `swoosh_fast_bright.mp3`, `impact_heavy_reverb.mp3`\n")
-            
-            self.logger.info(f"Created sound effects directory structure at {base_dir}")
-            self.logger.info(f"Please add sound effect files to the appropriate subdirectories.")
-            return
+        except Exception as e:
+            logger.error(f"Failed to load opportunities: {e}")
+            raise
+
+    def analyze_video_audio(self, video_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Analyze the video's audio track to determine volume levels at different timestamps.
+        This is used to adaptively scale sound effect volumes.
+
+        Args:
+            video_path: Path to the video file (overrides constructor path)
+
+        Returns:
+            Dictionary with audio analysis data
+        """
+        path = video_path or self.video_path
+        if not path:
+            raise ValueError("No video path provided")
+
+        logger.info(f"Analyzing audio for {path}")
         
-        # Discover categories (subdirectories)
-        for category_dir in base_dir.iterdir():
-            if not category_dir.is_dir():
+        try:
+            # Extract basic video information
+            probe = ffmpeg.probe(path)
+            video_info = next((s for s in probe['streams'] if s['codec_type'] == 'video'), None)
+            audio_info = next((s for s in probe['streams'] if s['codec_type'] == 'audio'), None)
+            
+            if not video_info:
+                raise ValueError("No video stream found in the input file")
+            
+            # Store video information for later use
+            self.video_info = {
+                'duration': float(probe['format']['duration']),
+                'width': int(video_info['width']),
+                'height': int(video_info['height']),
+                'has_audio': audio_info is not None
+            }
+            
+            # If no audio track, return early with default values
+            if not audio_info:
+                logger.warning("No audio stream found in the video. Using default volume levels.")
+                return {
+                    'avg_volume': 0,
+                    'peak_volume': 0,
+                    'has_audio': False,
+                    'segments': []
+                }
+            
+            # Extract audio for analysis using PyDub
+            temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+            self.temp_files.append(temp_audio.name)
+            
+            # Extract audio using ffmpeg
+            (
+                ffmpeg
+                .input(path)
+                .output(temp_audio.name, format='wav', acodec='pcm_s16le', ac=1)
+                .run(quiet=True, overwrite_output=True)
+            )
+            
+            # Load audio for analysis
+            audio = AudioSegment.from_file(temp_audio.name)
+            
+            # Analyze overall audio levels
+            overall_dBFS = audio.dBFS
+            
+            # Analyze audio in 1-second chunks
+            chunk_length_ms = 1000  # 1 second
+            chunks = make_chunks(audio, chunk_length_ms)
+            
+            # Calculate volume level for each chunk
+            segments = []
+            for i, chunk in enumerate(chunks):
+                # Only include if chunk has content
+                if len(chunk) > 0:
+                    segment_data = {
+                        'timestamp': i,
+                        'duration': len(chunk) / 1000,
+                        'volume_dBFS': chunk.dBFS if chunk.dBFS > float('-inf') else -80
+                    }
+                    segments.append(segment_data)
+            
+            # Calculate peak volume
+            peak_volume = max((s['volume_dBFS'] for s in segments), default=-80)
+            
+            # Clean up temp files if needed
+            if os.path.exists(temp_audio.name):
+                try:
+                    os.unlink(temp_audio.name)
+                    self.temp_files.remove(temp_audio.name)
+                except:
+                    pass
+                
+            analysis = {
+                'avg_volume': overall_dBFS,
+                'peak_volume': peak_volume,
+                'has_audio': True,
+                'segments': segments
+            }
+            
+            logger.info(f"Audio analysis complete. Average volume: {overall_dBFS:.2f} dBFS, Peak: {peak_volume:.2f} dBFS")
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze video audio: {e}")
+            self._cleanup_temp_files()
+            raise
+
+    def prepare_sound_effects(self, opportunities: List[Dict[str, Any]], audio_analysis: Dict[str, Any]) -> List[SoundEffect]:
+        """
+        Prepare sound effects based on opportunities and audio analysis.
+        Adjusts volume and duration based on the video's existing audio.
+
+        Args:
+            opportunities: List of sound effect opportunities
+            audio_analysis: Audio analysis data from analyze_video_audio
+
+        Returns:
+            List of prepared SoundEffect objects
+        """
+        sound_effects = []
+        
+        # Define volume scales based on sound effect type
+        type_volume_scales = {
+            'transition_in': 0.85,   # Louder for transitions
+            'transition_out': 0.85,  # Louder for transitions
+            'ambient': 0.5           # Quieter for ambient/background sounds
+        }
+        
+        for opp in opportunities:
+            try:
+                # Verify required fields
+                required_fields = ['timestamp', 'duration', 'type', 'sound_file_path']
+                if not all(field in opp for field in required_fields):
+                    logger.warning(f"Skipping opportunity due to missing fields: {opp}")
+                    continue
+                
+                # Verify sound file exists
+                if not os.path.exists(opp['sound_file_path']):
+                    logger.warning(f"Sound file not found: {opp['sound_file_path']}")
+                    continue
+                
+                # Calculate adaptive volume scale based on audio analysis and effect type
+                volume_scale = self._calculate_volume_scale(
+                    opp['timestamp'], 
+                    opp['duration'], 
+                    opp['type'],
+                    audio_analysis
+                )
+                
+                # Apply base volume scale for effect type
+                volume_scale *= type_volume_scales.get(opp['type'], 0.8)
+                
+                # Apply global volume scale
+                volume_scale *= self.global_volume_scale
+                
+                # Create SoundEffect object
+                sound_effect = SoundEffect(
+                    timestamp=opp['timestamp'],
+                    duration=opp['duration'],
+                    type=opp['type'],
+                    sound_file_path=opp['sound_file_path'],
+                    volume_scale=volume_scale
+                )
+                
+                sound_effects.append(sound_effect)
+                logger.info(f"Prepared sound effect at {sound_effect.timestamp}s: {os.path.basename(sound_effect.sound_file_path)} (volume scale: {volume_scale:.2f})")
+                
+            except Exception as e:
+                logger.warning(f"Failed to prepare sound effect: {e}")
                 continue
                 
-            category_name = category_dir.name
-            self.sound_effects[category_name] = []
-            
-            # Load sound effects from this category
-            for sound_file in category_dir.glob("*.mp3"):
-                try:
-                    # Load basic info about the sound file
-                    audio = AudioSegment.from_file(str(sound_file))
-                    duration = len(audio) / 1000.0  # convert ms to seconds
-                    
-                    # Estimate energy level based on RMS
-                    rms = audio.rms
-                    if rms < 2000:
-                        energy_level = "low"
-                    elif rms < 5000:
-                        energy_level = "medium"
-                    else:
-                        energy_level = "high"
-                    
-                    # Extract tags from filename (e.g., "swoosh_fast_bright.mp3" -> ["fast", "bright"])
-                    name_parts = sound_file.stem.split('_')
-                    name = name_parts[0]
-                    tags = name_parts[1:] if len(name_parts) > 1 else []
-                    
-                    # Create sound effect object
-                    sound_effect = SoundEffect(
-                        name=name,
-                        path=str(sound_file),
-                        category=category_name,
-                        duration=duration,
-                        energy_level=energy_level,
-                        tags=tags
-                    )
-                    
-                    self.sound_effects[category_name].append(sound_effect)
-                    
-                except Exception as e:
-                    self.logger.warning(f"Failed to load sound effect {sound_file}: {e}")
-            
-            self.logger.info(f"Loaded {len(self.sound_effects[category_name])} sound effects in category '{category_name}'")
-    
-    def detect_transition_points(self, broll_data_path: str) -> List[TransitionPoint]:
+        return sound_effects
+
+    def _calculate_volume_scale(self, 
+                              timestamp: float, 
+                              duration: float, 
+                              effect_type: str,
+                              audio_analysis: Dict[str, Any]) -> float:
         """
-        Analyze broll cuts data to identify transition points for sound effects.
-        
+        Calculate adaptive volume scale based on the video's audio level at the specified timestamp.
+
         Args:
-            broll_data_path: Path to the B-roll cuts JSON file
-            
+            timestamp: Timestamp in seconds
+            duration: Duration in seconds
+            effect_type: Type of sound effect
+            audio_analysis: Audio analysis data
+
         Returns:
-            List of TransitionPoint objects
+            Volume scale factor (0.0-1.0)
         """
-        transitions = []
+        # Default scale if no audio or incomplete analysis
+        default_scale = {
+            'transition_in': 0.8,
+            'transition_out': 0.8,
+            'ambient': 0.5
+        }.get(effect_type, 0.7)
         
-        try:
-            # Load B-roll data
-            with open(broll_data_path, 'r') as f:
-                data = json.load(f)
+        if not audio_analysis.get('has_audio', False) or not audio_analysis.get('segments'):
+            return default_scale
             
-            broll_cuts = data.get("broll_cuts", [])
-            
-            # Get video duration if available
-            video_duration = data.get("metadata", {}).get("video_duration", 0)
-            
-            for i, cut in enumerate(broll_cuts):
-                # Skip cuts without a valid path
-                if not cut.get("path"):
-                    continue
-                
-                timestamp = cut.get("timestamp", 0)
-                duration = cut.get("duration", 0)
-                
-                # Create context with additional information
-                context = {
-                    "keywords": cut.get("keywords", []),
-                    "transcript_segment": cut.get("transcript_segment", ""),
-                    "reason": cut.get("reason", ""),
-                    "is_first_cut": i == 0,
-                    "is_last_cut": i == len(broll_cuts) - 1,
-                    "video_duration": video_duration
-                }
-                
-                # Add transition IN point (start of B-roll)
-                transitions.append(TransitionPoint(
-                    timestamp=timestamp,
-                    duration=duration,
-                    transition_type="in",
-                    context=context
-                ))
-                
-                # Add transition OUT point (end of B-roll)
-                transitions.append(TransitionPoint(
-                    timestamp=timestamp + duration,
-                    duration=0,  # No duration for out transition
-                    transition_type="out",
-                    context=context
-                ))
-            
-            # Sort transitions by timestamp
-            transitions.sort(key=lambda t: t.timestamp)
-            
-            # Filter transitions that are too close to each other
-            filtered_transitions = []
-            last_timestamp = -self.min_gap_between_effects
-            
-            for transition in transitions:
-                if transition.timestamp - last_timestamp >= self.min_gap_between_effects:
-                    filtered_transitions.append(transition)
-                    last_timestamp = transition.timestamp
-                else:
-                    self.logger.debug(f"Skipping transition at {transition.timestamp}s (too close to previous)")
-            
-            self.logger.info(f"Detected {len(filtered_transitions)} transition points from {len(broll_cuts)} B-roll cuts")
-            return filtered_transitions
-            
-        except Exception as e:
-            self.logger.error(f"Error detecting transition points: {e}")
-            return []
-        
-    def _select_sound_by_context(self, transition: TransitionPoint, available_effects: List[SoundEffect]) -> SoundEffect:
-        """Select a sound effect based on transition context."""
-        # Extract context information
-        context = transition.context
-        keywords = context.get("keywords", [])
-        transcript = context.get("transcript_segment", "")
-        is_first_cut = context.get("is_first_cut", False)
-        is_last_cut = context.get("is_last_cut", False)
-        
-        # Default score for each effect
-        scores = {effect: 1.0 for effect in available_effects}
-        
-        # Score based on energy level
-        energy_preference = "high" if any(word in " ".join(keywords).lower() 
-                                        for word in ["action", "fast", "energetic", "dynamic"]) else "medium"
-        
-        if "calm" in " ".join(keywords).lower() or "gentle" in " ".join(keywords).lower():
-            energy_preference = "low"
-        
-        # Adjust scores based on energy match
-        for effect in available_effects:
-            if effect.energy_level == energy_preference:
-                scores[effect] *= 2.0
-            elif (energy_preference == "high" and effect.energy_level == "medium") or \
-                (energy_preference == "medium" and effect.energy_level in ["high", "low"]):
-                scores[effect] *= 1.5
-        
-        # Prioritize certain sounds for first/last cuts
-        if is_first_cut:
-            for effect in available_effects:
-                if "intro" in effect.tags or "opening" in effect.tags:
-                    scores[effect] *= 2.5
-        
-        if is_last_cut:
-            for effect in available_effects:
-                if "outro" in effect.tags or "closing" in effect.tags:
-                    scores[effect] *= 2.5
-        
-        # Check for keyword matches in sound effect tags
-        for effect in available_effects:
-            for tag in effect.tags:
-                if any(keyword.lower() in tag.lower() for keyword in keywords):
-                    scores[effect] *= 1.8
-        
-        # Select based on weighted random
-        total_score = sum(scores.values())
-        if total_score == 0:
-            return random.choice(available_effects)
-        
-        r = random.uniform(0, total_score)
-        upto = 0
-        for effect, score in scores.items():
-            if upto + score >= r:
-                return effect
-            upto += score
-        
-        # Fallback
-        return random.choice(available_effects)
-    
-    def select_sound_effect(self, transition: TransitionPoint) -> Optional[SoundEffect]:
-        """
-        Select an appropriate sound effect for a given transition point.
-        
-        Args:
-            transition: The transition point
-            
-        Returns:
-            Selected SoundEffect or None if no suitable effect found
-        """
-        # Determine appropriate category based on transition type
-        if transition.transition_type == "in":
-            # For transition into B-roll, primarily use whooshes
-            categories = ["whooshes"]
-            # Secondary options if whooshes aren't available
-            fallback_categories = ["stingers", "ui"]
-        else:  # "out"
-            # For transition out of B-roll, primarily use impacts
-            categories = ["impacts"] 
-            # Secondary options if impacts aren't available
-            fallback_categories = ["stingers", "foley"]
-        
-        # Filter categories to those that actually exist
-        available_categories = [c for c in categories if c in self.sound_effects and self.sound_effects[c]]
-        
-        if not available_categories:
-            # Try fallback categories if primary aren't available
-            available_categories = [c for c in fallback_categories if c in self.sound_effects and self.sound_effects[c]]
-            
-            if not available_categories:
-                # Fall back to any available category
-                available_categories = [c for c in self.sound_effects if self.sound_effects[c]]
-                
-                if not available_categories:
-                    self.logger.warning("No sound effects available")
-                    return None
-        
-        # Choose a random category from available ones
-        category = random.choice(available_categories)
-        
-        # Get list of sound effects in this category
-        effects = self.sound_effects[category]
-        
-        # Filter out overused sounds
-        available_effects = [
-            effect for effect in effects
-            if self.used_sounds.get(effect.path, 0) < self.max_sounds_per_video
+        # Find segments that overlap with our effect
+        effect_end = timestamp + duration
+        overlapping_segments = [
+            s for s in audio_analysis['segments'] 
+            if (s['timestamp'] <= effect_end and s['timestamp'] + s['duration'] >= timestamp)
         ]
         
-        if not available_effects:
-            # If all sounds are overused, reset counts for this category
-            available_effects = effects
-            for effect in effects:
-                self.used_sounds[effect.path] = 0
+        if not overlapping_segments:
+            return default_scale
+            
+        # Calculate average volume of overlapping segments
+        segment_volumes = [s['volume_dBFS'] for s in overlapping_segments]
+        avg_segment_volume = sum(segment_volumes) / len(segment_volumes)
         
-        # With context-aware selection:
-        selected_effect = self._select_sound_by_context(transition, available_effects)
+        # Reference levels (can be adjusted)
+        reference_quiet = -30  # dBFS
+        reference_loud = -10   # dBFS
         
-        # Update usage count
-        self.used_sounds[selected_effect.path] = self.used_sounds.get(selected_effect.path, 0) + 1
-        
-        return selected_effect
-    
-    def apply_sound_effects(
-        self,
-        video_path: str,
-        broll_data_path: str,
-        output_path: Optional[str] = None
-    ) -> str:
+        # Scale based on audio level (louder when video is quiet, quieter when video is loud)
+        if avg_segment_volume <= reference_quiet:
+            # Video is very quiet, use higher scale
+            scale = 0.9
+        elif avg_segment_volume >= reference_loud:
+            # Video is very loud, use lower scale
+            scale = 0.3
+        else:
+            # Linear interpolation between quiet and loud references
+            # Normalize the range from reference_quiet to reference_loud to 0.3-0.9
+            normalized_pos = (avg_segment_volume - reference_quiet) / (reference_loud - reference_quiet)
+            scale = 0.9 - (normalized_pos * 0.6)  # Scale from 0.9 down to 0.3
+            
+        # Further adjust based on effect type
+        if effect_type == 'ambient':
+            # Ambient sounds should be quieter
+            scale *= 0.6
+            
+        return min(max(scale, 0.1), 1.0)  # Clamp between 0.1 and 1.0
+
+    def process_sound_effects(self, sound_effects: Optional[List[SoundEffect]] = None) -> bool:
         """
-        Apply sound effects to the video at B-roll transition points.
-        
+        Process and apply sound effects to the video.
+
         Args:
-            video_path: Path to the input video
-            broll_data_path: Path to the B-roll cuts JSON file
-            output_path: Path for the output video (if None, will use input path with "_with_sfx" suffix)
-            
+            sound_effects: List of sound effects to apply (uses self.sound_effects if None)
+
         Returns:
-            Path to the output video with sound effects
+            True if successful, False otherwise
         """
+        effects = sound_effects or self.sound_effects
+        if not effects:
+            logger.warning("No sound effects to process")
+            return False
+            
+        if not self.video_path or not self.output_path:
+            raise ValueError("Video path and output path must be set")
+            
+        logger.info(f"Processing {len(effects)} sound effects for {self.video_path}")
+        
         try:
-            # Determine output path
-            if output_path is None:
-                input_path = Path(video_path)
-                output_path = str(input_path.with_stem(f"{input_path.stem}_with_sfx"))
+            # Normalize sound effects (adjust duration and format)
+            prepared_effects = self._prepare_effect_files(effects)
             
-            # Create output directory if it doesn't exist
-            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            # Create a complex filter for FFmpeg
+            filter_complex = self._create_ffmpeg_filter(prepared_effects)
             
-            # Detect transition points
-            transition_points = self.detect_transition_points(broll_data_path)
+            # Execute FFmpeg command
+            self._execute_ffmpeg_command(filter_complex)
             
-            if not transition_points:
-                self.logger.warning("No valid transition points found. Copying original video.")
-                import shutil
-                shutil.copy2(video_path, output_path)
-                return output_path
-            
-            # Load video
-            self.logger.info(f"Loading video: {video_path}")
-            video = VideoFileClip(video_path)
-            
-            # Get original audio
-            original_audio = video.audio
-            if original_audio is None:
-                self.logger.warning("Video has no audio track. Creating silent audio.")
-                from moviepy.audio.AudioClip import AudioClip
-                import numpy as np
-                silence = lambda t: 0
-                original_audio = AudioClip(make_frame=silence, duration=video.duration)
-            
-            # Prepare list for all audio clips
-            audio_clips = [original_audio]
-            
-            # Generate unique cache key based on input files and parameters
-            cache_key = hashlib.md5(
-                f"{video_path}_{broll_data_path}_{self.fade_duration}_{self.volume_adjustment}".encode()
-            ).hexdigest()
-            
-            # Check if we have a cached result
-            cache_path = None
-            if self.cache_dir:
-                cache_path = os.path.join(self.cache_dir, f"{cache_key}_audio.mp3")
-                
-                if os.path.exists(cache_path):
-                    self.logger.info(f"Using cached audio from {cache_path}")
-                    
-                    # Create final video with cached audio
-                    final_audio = AudioFileClip(cache_path)
-                    final_video = video.set_audio(final_audio)
-                    
-                    # Write final video
-                    self.logger.info(f"Writing video with cached audio to {output_path}")
-                    final_video.write_videofile(output_path, codec="libx264", audio_codec="aac")
-                    
-                    # Clean up
-                    final_video.close()
-                    final_audio.close()
-                    video.close()
-                    
-                    return output_path
-            
-            # Apply sound effects at each transition point
-            for transition in transition_points:
-                # Select appropriate sound effect
-                sound_effect = self.select_sound_effect(transition)
-                
-                if not sound_effect:
-                    self.logger.warning(f"No suitable sound effect found for transition at {transition.timestamp}s")
-                    continue
-                
-                self.logger.info(f"Adding {sound_effect.category}/{sound_effect.name} at {transition.timestamp}s")
-                
-                # Load sound effect audio
-                effect_audio = sound_effect.load_audio()
-                
-                # Apply fade in/out to sound effect
-                effect_audio = effect_audio.audio_fadeout(self.fade_duration)
-                effect_audio = effect_audio.audio_fadein(self.fade_duration)
-                
-                # Adjust volume
-                effect_audio = effect_audio.volumex(self.volume_adjustment)
-                
-                # Position the sound effect at the transition point
-                # For "in" transitions, start slightly before the transition
-                # For "out" transitions, center the sound on the transition
-                if transition.transition_type == "in":
-                    # Start effect slightly before transition point
-                    start_time = max(0, transition.timestamp - (effect_audio.duration / 3))
-                else:  # "out"
-                    # Center effect on transition point
-                    start_time = max(0, transition.timestamp - (effect_audio.duration / 2))
-                
-                # Create positioned audio clip
-                positioned_effect = effect_audio.set_start(start_time)
-                
-                # Add to list of audio clips
-                audio_clips.append(positioned_effect)
-            
-            # Combine all audio clips
-            self.logger.info(f"Combining {len(audio_clips)} audio clips")
-            final_audio = CompositeAudioClip(audio_clips)
-            
-            # Cache the combined audio if needed
-            if cache_path:
-                self.logger.info(f"Caching combined audio to {cache_path}")
-                final_audio.write_audiofile(cache_path, codec="mp3")
-            
-            # Apply combined audio to video
-            final_video = video.set_audio(final_audio)
-            
-            # Write final video
-            self.logger.info(f"Writing final video to {output_path}")
-            final_video.write_videofile(output_path, codec="libx264", audio_codec="aac")
-            
-            # Clean up
-            final_video.close()
-            final_audio.close()
-            video.close()
-            
-            return output_path
+            logger.info(f"Successfully added sound effects to {self.output_path}")
+            return True
             
         except Exception as e:
-            self.logger.error(f"Error applying sound effects: {e}")
-            import traceback
-            self.logger.error(traceback.format_exc())
+            logger.error(f"Failed to process sound effects: {e}")
+            return False
+        finally:
+            self._cleanup_temp_files()
+
+    def _prepare_effect_files(self, sound_effects: List[SoundEffect]) -> List[Dict[str, Any]]:
+        """
+        Prepare sound effect files by adjusting duration and format if needed.
+
+        Args:
+            sound_effects: List of sound effects to prepare
+
+        Returns:
+            List of prepared effect dictionaries
+        """
+        prepared_effects = []
+        
+        for i, effect in enumerate(sound_effects):
+            try:
+                # Load sound file with PyDub
+                sound = AudioSegment.from_file(effect.sound_file_path)
+                
+                # Check duration
+                original_duration = len(sound) / 1000  # Convert ms to seconds
+                
+                if original_duration > effect.duration:
+                    # Trim sound to match duration
+                    logger.info(f"Trimming sound effect {i+1} from {original_duration:.2f}s to {effect.duration:.2f}s")
+                    sound = sound[:int(effect.duration * 1000)]
+                elif original_duration < effect.duration:
+                    # For shorter sounds, we'll just use them as-is and let FFmpeg handle the timing
+                    # No looping - just use the original sound
+                    logger.info(f"Sound effect {i+1} is shorter than specified duration ({original_duration:.2f}s < {effect.duration:.2f}s). Using as-is.")
+                
+                # Adjust volume
+                if effect.volume_scale != 1.0:
+                    # Convert scale factor to dB change
+                    db_change = 20 * (effect.volume_scale - 1)  # This converts linear scale to dB
+                    sound = sound.apply_gain(db_change)
+                
+                # Save to temporary file
+                temp_effect = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+                self.temp_files.append(temp_effect.name)
+                
+                sound.export(temp_effect.name, format='wav')
+                
+                prepared_effects.append({
+                    'index': i,
+                    'effect': effect,
+                    'temp_path': temp_effect.name,
+                    'original_duration': original_duration
+                })
+                
+            except Exception as e:
+                logger.warning(f"Failed to prepare sound effect {i+1}: {e}")
+                continue
+                
+        return prepared_effects
+
+    def _create_ffmpeg_filter(self, prepared_effects: List[Dict[str, Any]]) -> str:
+        """
+        Create a complex filter string for FFmpeg with all sound effects.
+
+        Args:
+            prepared_effects: List of prepared sound effect dictionaries
+
+        Returns:
+            FFmpeg complex filter string
+        """
+        # Start with filter parts for individual effects
+        filter_parts = []
+        
+        # Create sound effect parts
+        for i, effect in enumerate(prepared_effects):
+            # Input index starts at 1 (0 is the main video)
+            input_idx = i + 1
+            sound_idx = effect['index']
+            timestamp = effect['effect'].timestamp
             
-            # Return original video path if processing failed
-            return video_path
-    
-    def get_available_categories(self) -> List[str]:
-        """Get a list of available sound effect categories."""
-        return list(self.sound_effects.keys())
-    
-    def get_effects_in_category(self, category: str) -> List[SoundEffect]:
-        """Get a list of sound effects in a specific category."""
-        return self.sound_effects.get(category, [])
+            # Add filter for this sound effect
+            filter_parts.append(f"[{input_idx}:a]adelay={int(timestamp*1000)}|{int(timestamp*1000)}[a{sound_idx}]")
+        
+        # Now handle the mixing
+        if not self.video_info.get('has_audio', False):
+            # No original audio, create silence
+            filter_parts.append(f"anullsrc=r=44100:cl=stereo:d={self.video_info['duration']}[silence]")
+            
+            # If there are sound effects, mix them with the silence
+            if prepared_effects:
+                # Create the mix command
+                mix_inputs = ["[silence]"]
+                for i in range(len(prepared_effects)):
+                    mix_inputs.append(f"[a{i}]")
+                
+                # Use amerge instead of amix for better control
+                filter_parts.append(f"{' '.join(mix_inputs)}amerge=inputs={len(mix_inputs)}[aout]")
+            else:
+                # No sound effects either, just use silence
+                filter_parts.append("[silence]asetpts=PTS-STARTPTS[aout]")
+        else:
+            # We have original audio, preserve its volume
+            if prepared_effects:
+                # Create multiple mix steps to preserve original audio volume
+                
+                # First step: Create a named reference to the original audio
+                filter_parts.append("[0:a]asetpts=PTS-STARTPTS[original]")
+                
+                # For each sound effect, mix it with either the original or the previous mix
+                for i in range(len(prepared_effects)):
+                    input_label = "[original]" if i == 0 else f"[mix{i-1}]"
+                    output_label = f"[mix{i}]" if i < len(prepared_effects) - 1 else "[aout]"
+                    
+                    # Use volume filter to preserve the original audio volume
+                    # The goal is to layer the sound effects on top without changing the original audio
+                    filter_parts.append(
+                        f"{input_label}[a{i}]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0{output_label}"
+                    )
+            else:
+                # No sound effects, just pass through the original audio
+                filter_parts.append("[0:a]asetpts=PTS-STARTPTS[aout]")
+        
+        # Complete filter string
+        return ';'.join(filter_parts)
+
+    def _execute_ffmpeg_command(self, filter_complex: str) -> None:
+        """
+        Execute the FFmpeg command to apply sound effects.
+
+        Args:
+            filter_complex: FFmpeg complex filter string
+        """
+        # Prepare the base command
+        cmd = ['ffmpeg', '-y', '-i', self.video_path]
+        
+        # Add each sound effect file as input
+        for effect in self.temp_files:
+            if effect.endswith('.wav'):
+                cmd.extend(['-i', effect])
+        
+        # Add filter complex
+        cmd.extend(['-filter_complex', filter_complex])
+        
+        # Add output settings
+        cmd.extend([
+            '-map', '0:v',         # Map original video
+            '-map', '[aout]',      # Map mixed audio output
+            '-c:v', 'copy',        # Copy video codec to avoid re-encoding
+            '-c:a', 'aac',         # Audio codec
+            '-b:a', '192k',        # Audio bitrate
+            self.output_path
+        ])
+        
+        # Execute command
+        logger.info(f"Executing FFmpeg command: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+
+    def _cleanup_temp_files(self) -> None:
+        """Clean up any temporary files created during processing."""
+        for temp_file in self.temp_files:
+            if os.path.exists(temp_file):
+                try:
+                    os.unlink(temp_file)
+                except Exception as e:
+                    logger.warning(f"Failed to delete temporary file {temp_file}: {e}")
+        
+        self.temp_files = []
+
+    def process(self, 
+               video_path: Optional[str] = None,
+               output_path: Optional[str] = None,
+               opportunities_path: Optional[str] = None,
+               global_volume_scale: Optional[float] = None) -> bool:
+        """
+        Full pipeline to process sound effects from opportunities to final video.
+
+        Args:
+            video_path: Path to the video file (overrides constructor path)
+            output_path: Path for the output video (overrides constructor path)
+            opportunities_path: Path to opportunities JSON (overrides constructor path)
+            global_volume_scale: Global volume scale for all sound effects (overrides constructor value)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Set paths if provided
+            self.video_path = video_path or self.video_path
+            self.output_path = output_path or self.output_path
+            self.opportunities_path = opportunities_path or self.opportunities_path
+            
+            # Set global volume scale if provided
+            if global_volume_scale is not None:
+                self.global_volume_scale = global_volume_scale
+            
+            # Validate paths
+            if not self.video_path or not os.path.exists(self.video_path):
+                raise ValueError(f"Invalid or missing video path: {self.video_path}")
+                
+            if not self.output_path:
+                raise ValueError("Output path is required")
+                
+            if not self.opportunities_path or not os.path.exists(self.opportunities_path):
+                raise ValueError(f"Invalid or missing opportunities path: {self.opportunities_path}")
+            
+            # Create output directory if it doesn't exist
+            os.makedirs(os.path.dirname(os.path.abspath(self.output_path)), exist_ok=True)
+            
+            # Load opportunities
+            opportunities = self.load_opportunities()
+            
+            # Skip if no opportunities
+            if not opportunities:
+                logger.info("No sound effect opportunities found. Copying input to output.")
+                
+                # If no processing needed, just copy the input to output
+                ffmpeg.input(self.video_path).output(self.output_path, c='copy').run(quiet=True, overwrite_output=True)
+                return True
+                
+            # Analyze video audio
+            audio_analysis = self.analyze_video_audio()
+            
+            # Prepare sound effects
+            self.sound_effects = self.prepare_sound_effects(opportunities, audio_analysis)
+            
+            # Process sound effects
+            success = self.process_sound_effects()
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Failed to process sound effects: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            self._cleanup_temp_files()
+            return False
 
 
 def parse_args():
-    """Parse command line arguments."""
-    import argparse
+    """Parse command line arguments for CLI usage."""
+    parser = argparse.ArgumentParser(description='Apply sound effects to a video based on opportunities')
     
-    parser = argparse.ArgumentParser(description='Apply sound effects to B-roll transitions')
-    parser.add_argument('--video', required=True, help='Path to the input video')
-    parser.add_argument('--broll-data', required=True, help='Path to the B-roll cuts JSON file')
-    parser.add_argument('--output', help='Path for the output video (optional)')
-    parser.add_argument('--sound-effects-dir', default='./assets/sound_effects', 
-                        help='Directory containing sound effect files')
-    parser.add_argument('--cache-dir', default='./cache/sound_effects', 
-                        help='Directory to cache processed audio')
-    parser.add_argument('--fade-duration', type=float, default=0.3, 
-                        help='Duration in seconds for fading sound effects')
-    parser.add_argument('--volume', type=float, default=0.7, 
-                        help='Volume adjustment for sound effects (0.0-1.0)')
+    parser.add_argument('--video', '-v', required=True, help='Path to the input video file')
+    parser.add_argument('--output', '-o', required=True, help='Path for the output video file')
+    parser.add_argument('--opportunities', '-j', required=True, help='Path to the JSON file with sound effect opportunities')
+    parser.add_argument('--volume', '-vol', type=float, default=1.0, help='Global volume scale for all sound effects (0.1-2.0, default: 1.0)')
     
-    return parser.parse_args()
+    args = parser.parse_args()
+    
+    # Validate volume scale
+    if args.volume < 0.1 or args.volume > 2.0:
+        parser.error("Volume scale must be between 0.1 and 2.0")
+    
+    return args
+
+
+def main():
+    """Main entry point for CLI usage."""
+    args = parse_args()
+    
+    logger.info(f"Sound Effect Manager starting with video: {args.video}")
+    
+    manager = SoundEffectManager(
+        video_path=args.video,
+        output_path=args.output,
+        opportunities_path=args.opportunities,
+        global_volume_scale=args.volume
+    )
+    
+    success = manager.process()
+    
+    if success:
+        logger.info(f"Sound effects successfully applied. Output saved to: {args.output}")
+        return 0
+    else:
+        logger.error("Failed to apply sound effects")
+        return 1
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    
-    try:
-        # Initialize sound effect manager
-        manager = SoundEffectManager(
-            sound_effects_dir=args.sound_effects_dir,
-            cache_dir=args.cache_dir,
-            fade_duration=args.fade_duration,
-            volume_adjustment=args.volume
-        )
-        
-        # Apply sound effects
-        output_path = manager.apply_sound_effects(
-            video_path=args.video,
-            broll_data_path=args.broll_data,
-            output_path=args.output
-        )
-        
-        print(f"Successfully applied sound effects. Output saved to: {output_path}")
-        
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        sys.exit(1)
+    exit(main())
