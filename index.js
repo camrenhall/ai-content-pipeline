@@ -50,8 +50,7 @@ async function run() {
     transitions,
     threads: 0,
     ffmpeg: {
-      codec: 'h264_nvenc',
-      preset: 'ultrafast',   // NVENC’s “low-latency high-quality” preset
+      preset: 'ultrafast',
       crf: 23
     }
   };
