@@ -7,6 +7,9 @@ __pycache__/
 cache/
 tmp/
 
+# Distribution / packaging
+/node_modules/
+
 # Secrets file - NEVER commit this
 secrets.properties
 .env

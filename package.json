@@ -1,0 +1,13 @@
+{
+    "name": "editly-mvp",
+    "version": "1.0.0",
+    "type": "module",
+    "description": "MVP for programmatic video transitions with Editly",
+    "main": "index.js",
+    "scripts": {
+      "start": "node index.js"
+    },
+    "dependencies": {
+      "editly": "^0.15.0-rc.1"
+    }
+  }
