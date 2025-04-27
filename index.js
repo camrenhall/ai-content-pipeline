@@ -3,13 +3,20 @@ import path from 'path';
 import editly from 'editly';
 
 async function run() {
-  const clipsDir = path.resolve('./clips');
+  const clipsDir = path.resolve('./output_clips');
+
+  // Read and parse clip files with indices
   const files = fs.readdirSync(clipsDir)
-    .filter(f => f.endsWith('.mp4'))
-    .sort();
+    .filter(f => f.endsWith('.mp4') && /_clip_(\d+)\.mp4$/.test(f))
+    .map(f => ({
+      filename: f,
+      clipNumber: parseInt(f.match(/_clip_(\d+)\.mp4$/)[1], 10),
+    }))
+    .sort((a, b) => a.clipNumber - b.clipNumber)
+    .map(obj => obj.filename);
 
   if (files.length < 2) {
-    console.error('Need at least two .mp4 files in /clips to apply transitions.');
+    console.error('Need at least two .mp4 files in /output_clips to apply transitions.');
     process.exit(1);
   }
 
@@ -21,24 +28,19 @@ async function run() {
     ],
   }));
 
-  // Prepare output path and ensure it's not an existing directory
+  // Clean up any existing output.mp4
   const outPath = path.resolve('./output.mp4');
   if (fs.existsSync(outPath)) {
     const stats = fs.lstatSync(outPath);
     if (stats.isDirectory()) {
-      console.log(`Removing existing directory at ${outPath}`);
       fs.rmSync(outPath, { recursive: true, force: true });
     } else {
-      // Remove existing file to avoid conflicts
       fs.unlinkSync(outPath);
     }
   }
 
   // 1s crossfade between each clip
-  const transitions = Array(files.length - 1).fill({
-    name: 'crossfade',
-    duration: 1,
-  });
+  const transitions = Array(clips.length - 1).fill({ name: 'crossfade', duration: 1 });
 
   const editSpec = {
     outPath,
@@ -46,8 +48,8 @@ async function run() {
     height: 1920,
     fps: 30,
     clips,
-    streamChunkSize: 4096,
     transitions,
+    streamChunkSize: 4096,
     threads: 0,
     ffmpeg: {
       preset: 'ultrafast',
