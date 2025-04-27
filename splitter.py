@@ -4,15 +4,20 @@ import os
 import sys
 import argparse
 import ffmpeg
+from decimal import Decimal, getcontext
 
-def split_video(input_video, json_payload, output_dir=None, verbose=False):
+# Set decimal precision to ensure accuracy
+getcontext().prec = 28
+
+def split_video(input_video, json_payload, output_dir=None, verbose=False, ms_offset=0.001):
     """
-    Split a video into subclips based on a JSON payload of B-roll cuts.
+    Split a video into subclips based on a JSON payload of B-roll cuts with millisecond precision.
     
     :param input_video: Path to the input video file
     :param json_payload: Path to the JSON file containing cut instructions
     :param output_dir: Directory to save output clips (defaults to input video directory)
     :param verbose: Enable verbose logging
+    :param ms_offset: Millisecond offset to use between adjacent clips (default: 0.001)
     :return: List of created clip paths
     """
     # If no output directory specified, use input video's directory
@@ -36,51 +41,73 @@ def split_video(input_video, json_payload, output_dir=None, verbose=False):
     # Extract broll cuts
     broll_cuts = payload.get('broll_cuts', [])
     
-    # Get video duration
+    # Get video duration with high precision
     try:
         probe = ffmpeg.probe(input_video)
         video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
-        duration = float(probe['format']['duration'])
+        # Use Decimal for high precision
+        duration = Decimal(probe['format']['duration'])
+        if verbose:
+            print(f"Video duration: {duration} seconds")
     except Exception as e:
         print(f"Error probing video: {e}", file=sys.stderr)
         sys.exit(1)
     
-    # Prepare clip timestamps
-    clip_timestamps = [0]  # Start with 0
+    # Derive segments
+    segments = []
     
-    # Add timestamps from broll cuts
+    # First, create a list of all points where cuts happen
+    cut_points = []
+    
+    # Add beginning of video
+    cut_points.append(Decimal('0'))
+    
+    # Add all timestamps from the JSON
     for cut in broll_cuts:
-        clip_timestamps.append(cut['timestamp'])
-        clip_timestamps.append(cut['timestamp'] + cut['duration'])
+        # Start of cut
+        start_time = Decimal(str(cut['timestamp']))
+        cut_points.append(start_time)
+        
+        # End of cut
+        end_time = start_time + Decimal(str(cut['duration']))
+        cut_points.append(end_time)
     
-    clip_timestamps.append(duration)  # Add video end timestamp
+    # Add end of video
+    cut_points.append(duration)
     
-    # Remove duplicates and sort
-    clip_timestamps = sorted(set(clip_timestamps))
+    # Sort and de-duplicate
+    cut_points = sorted(set(cut_points))
+    
+    # Create segments from adjacent cut points
+    for i in range(len(cut_points) - 1):
+        start_time = cut_points[i]
+        # If this isn't the first segment, add a small offset to prevent overlap
+        if i > 0:
+            start_time = start_time + Decimal(str(ms_offset))
+        
+        end_time = cut_points[i + 1]
+        
+        # Only add the segment if it has a positive duration
+        if end_time > start_time:
+            segments.append((start_time, end_time))
     
     # Store created clip paths
     created_clips = []
     
     # Generate clips
-    for i in range(len(clip_timestamps) - 1):
-        start_time = clip_timestamps[i]
-        end_time = clip_timestamps[i + 1]
-        
-        # Skip zero-duration clips
-        if start_time >= end_time:
-            continue
-        
+    for i, (start_time, end_time) in enumerate(segments):
         # Create output filename
         base_filename = os.path.splitext(os.path.basename(input_video))[0]
         output_path = os.path.join(output_dir, f'{base_filename}_clip_{i}.mp4')
         
         try:
             if verbose:
-                print(f"Creating clip {i}: {start_time} - {end_time} seconds")
+                print(f"Creating clip {i}: {start_time} - {end_time} seconds (duration: {end_time-start_time}s)")
             
+            # Use float(str()) to preserve full decimal precision when passing to ffmpeg
             (
                 ffmpeg
-                .input(input_video, ss=start_time, t=end_time-start_time)
+                .input(input_video, ss=float(str(start_time)), t=float(str(end_time-start_time)))
                 .output(output_path, c='copy')
                 .overwrite_output()
                 .run(capture_stdout=True, capture_stderr=True)
@@ -99,22 +126,26 @@ def split_video(input_video, json_payload, output_dir=None, verbose=False):
 def main():
     # Create argument parser
     parser = argparse.ArgumentParser(
-        description='Split a video into subclips based on a JSON payload of B-roll cuts.',
+        description='Split a video into subclips with millisecond precision based on a JSON payload of B-roll cuts.',
         epilog='Example: python video_splitter.py input.mp4 broll_cuts.json -o output_clips -v'
     )
     
     # Positional arguments
     parser.add_argument('input_video', 
-                        help='Path to the input video file')
+                       help='Path to the input video file')
     parser.add_argument('json_payload', 
-                        help='Path to the JSON file containing cut instructions')
+                       help='Path to the JSON file containing cut instructions')
     
     # Optional arguments
     parser.add_argument('-o', '--output-dir', 
-                        help='Directory to save output clips (default: ./output_clips relative to input video)')
+                       help='Directory to save output clips (default: ./output_clips relative to input video)')
     parser.add_argument('-v', '--verbose', 
-                        action='store_true', 
-                        help='Enable verbose output')
+                       action='store_true', 
+                       help='Enable verbose output')
+    parser.add_argument('--ms-offset', 
+                       type=float, 
+                       default=0.001,
+                       help='Millisecond offset between adjacent clips (default: 0.001)')
     
     # Parse arguments
     args = parser.parse_args()
@@ -125,7 +156,8 @@ def main():
             args.input_video, 
             args.json_payload, 
             output_dir=args.output_dir, 
-            verbose=args.verbose
+            verbose=args.verbose,
+            ms_offset=args.ms_offset
         )
         
         # Print summary
@@ -139,11 +171,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-# Requirements:
-# 1. Install FFmpeg: 
-#    - On Ubuntu/Debian: sudo apt-get install ffmpeg
-#    - On macOS with Homebrew: brew install ffmpeg
-#    - On Windows: Download from FFmpeg official website
-# 2. Install Python dependencies:
-#    pip install ffmpeg-python
