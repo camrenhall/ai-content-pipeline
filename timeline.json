@@ -1,0 +1,54 @@
+{
+  "outPath": "final_output.mp4",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "defaults": {
+    "transition": {
+      "name": "crossFade",
+      "duration": 1.0
+    }
+  },
+  "clips": [
+    {
+      "layers": [
+        {
+          "type": "video",
+          "path": "./output_clips/orginalsfxmusic_clip_0.mp4"
+        }
+      ]
+    },
+    {
+      "layers": [
+        {
+          "type": "video",
+          "path": "./output_clips/orginalsfxmusic_clip_1.mp4"
+        }
+      ]
+    },
+    {
+      "layers": [
+        {
+          "type": "video",
+          "path": "./output_clips/orginalsfxmusic_clip_2.mp4"
+        }
+      ]
+    },
+    {
+      "layers": [
+        {
+          "type": "video",
+          "path": "./output_clips/orginalsfxmusic_clip_3.mp4"
+        }
+      ]
+    },
+    {
+      "layers": [
+        {
+          "type": "video",
+          "path": "./output_clips/orginalsfxmusic_clip_4.mp4"
+        }
+      ]
+    }
+  ]
+}
