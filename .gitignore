@@ -10,6 +10,7 @@ tmp/
 # Secrets file - NEVER commit this
 secrets.properties
 .env
+node_modules/
 
 # C extensions
 *.so

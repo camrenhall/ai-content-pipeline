@@ -1,0 +1,37 @@
+{
+    "all_available_transitions": [
+        "cross_fade",
+        "slide_left",
+        "slide_right",
+        "slide_up",
+        "slide_down",
+        "zoom_blend",
+        "whip_pan",
+        "push_pull",
+        "overlay_dissolve",
+        "kaleidoscope",
+        "glitch",
+        "particle",
+        "shatter",
+        "ripple",
+        "pixelate",
+        "cube_rotate",
+        "swirl"
+    ],
+    "enabled_transitions": [
+        "cross_fade",
+        "slide_left",
+        "slide_right",
+        "slide_up",
+        "slide_down",
+        "zoom_blend",
+        "whip_pan",
+        "overlay_dissolve",
+        "glitch",
+        "particle",
+        "shatter",
+        "pixelate",
+        "cube_rotate",
+        "swirl"
+    ]
+}
