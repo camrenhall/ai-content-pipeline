@@ -1103,6 +1103,9 @@ class PipelineOrchestrator:
         # Get post-processing configuration
         post_processing_config = context.config.get("post_processing", {})
         
+        # Get background music configuration
+        bg_music_config = context.config.get("background_music", {})
+        
         # Initialize orchestrator with updated configuration
         orchestrator = PostProcessingOrchestrator(
             config=context.config,
@@ -1110,9 +1113,7 @@ class PipelineOrchestrator:
             sound_effects_dir=post_processing_config.get("sound_effects", {}).get(
                 "sound_effects_dir", "./assets/sound_effects"
             ),
-            music_dir=post_processing_config.get("background_music", {}).get(
-                "music_dir", "./assets/background_music"
-            )
+            music_dir=bg_music_config.get("music_dir", "./assets/background_music")
         )
         
         # Get enabled steps

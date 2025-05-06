@@ -339,18 +339,23 @@ class PostProcessingOrchestrator:
                 # Apply background music to video
                 background_music_output = self._generate_temp_path("background_music")
                 
+                # Get background music configuration
+                bg_music_config = self.config.get("background_music", {})
+                
                 music_manager = BackgroundMusicManager(
                     music_dir=self.music_dir,
                     cache_dir=os.path.join(self.cache_dir, "background_music"),
-                    base_volume=self.config.get("background_music", {}).get("volume", 0.15),
-                    ducking_amount=self.config.get("background_music", {}).get("ducking", 0.5),
-                    smart_ducking=self.config.get("background_music", {}).get("smart_ducking", True)
+                    base_volume=bg_music_config.get("volume", 0.15),
+                    fade_in_duration=bg_music_config.get("fade_in", 2.0),
+                    fade_out_duration=bg_music_config.get("fade_out", 3.0)
                 )
                 
                 background_music_output = music_manager.apply_background_music(
                     video_path=current_video_path,
-                    broll_data_path=music_opp_path,
-                    output_path=background_music_output
+                    broll_data_path=broll_data_path,
+                    music_data_path=music_opp_path,
+                    output_path=background_music_output,
+                    volume_scale=bg_music_config.get("volume", 0.15)
                 )
                 
                 if background_music_output and os.path.exists(background_music_output):
@@ -563,145 +568,154 @@ class PostProcessingOrchestrator:
             return {}
 
 
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Post-processing for automated content pipeline')
-    parser.add_argument('--input', required=True, help='Path to the input video')
-    parser.add_argument('--broll-data', required=True, help='Path to the B-roll cuts JSON file')
-    parser.add_argument('--output', help='Path for the output video (optional)')
-    parser.add_argument('--config', default='./config.yaml', help='Path to configuration file')
-    parser.add_argument('--cache-dir', default='./cache/post_processing', help='Cache directory')
-    parser.add_argument('--sound-effects-dir', default='./assets/sound_effects', 
-                        help='Directory containing sound effect files')
-    parser.add_argument('--music-dir', default='./assets/background_music', 
-                        help='Directory containing background music files')
-    
-    # LLM API configuration
-    parser.add_argument('--llm-api-key', help='API key for LLM (for opportunity detectors)')
-    parser.add_argument('--llm-api-url', help='API URL for LLM (for opportunity detectors)')
-    
-    # Step selection arguments
-    parser.add_argument('--steps', nargs='+', 
-                   choices=['sound_effects', 'background_music', 'camera_movements', 
-                            'transitions', 'sound_reapplier', 'captioning'],
-                   help='Specific post-processing steps to run')
-    
-    # Keeping intermediate files
-    parser.add_argument('--keep-intermediates', action='store_true', 
-                        help='Keep intermediate files (default: cleanup)')
-    
-    # Sound effects options
-    parser.add_argument('--sound-effects-volume', type=float, default=0.7,
-                        help='Global volume scale for sound effects (0.1-1.0)')
-    
-    # Background music options
-    parser.add_argument('--music-volume', type=float, default=0.15,
-                        help='Volume level for background music (0.0-1.0)')
-    parser.add_argument('--music-ducking', type=float, default=0.5,
-                        help='Ducking amount for background music (0.0-1.0)')
-    parser.add_argument('--no-smart-ducking', action='store_true',
-                        help='Disable smart ducking for background music')
-    
-    # Camera movement options
-    parser.add_argument('--zoom-factor', type=float, default=1.1,
-                        help='Zoom factor for camera movements')
-    parser.add_argument('--shake-intensity', type=float, default=2.0,
-                        help='Intensity of camera shake effect')
-    
-    # Transition options
-    parser.add_argument('--transition-type', default='cross_fade',
-                        help='Type of transition to apply')
-    parser.add_argument('--transition-duration', type=int, default=20,
-                        help='Duration of transitions in frames')
-    parser.add_argument('--randomize-transitions', action='store_true',
-                        help='Randomize transition types')
-    
-    # Captions options
-    parser.add_argument('--captions-api-url', 
-                        default='https://ai-content-pipeline.onrender.com/caption-video',
-                        help='API URL for captions service')
-    
-    return parser.parse_args()
+    def parse_args():
+        """Parse command line arguments."""
+        parser = argparse.ArgumentParser(description='Post-processing for automated content pipeline')
+        parser.add_argument('--input', required=True, help='Path to the input video')
+        parser.add_argument('--broll-data', required=True, help='Path to the B-roll cuts JSON file')
+        parser.add_argument('--output', help='Path for the output video (optional)')
+        parser.add_argument('--config', default='./config.yaml', help='Path to configuration file')
+        parser.add_argument('--cache-dir', default='./cache/post_processing', help='Cache directory')
+        parser.add_argument('--sound-effects-dir', default='./assets/sound_effects', 
+                            help='Directory containing sound effect files')
+        parser.add_argument('--music-dir', default='./assets/background_music', 
+                            help='Directory containing background music files')
+        
+        # LLM API configuration
+        parser.add_argument('--llm-api-key', help='API key for LLM (for opportunity detectors)')
+        parser.add_argument('--llm-api-url', help='API URL for LLM (for opportunity detectors)')
+        
+        # Step selection arguments
+        parser.add_argument('--steps', nargs='+', 
+                    choices=['sound_effects', 'background_music', 'camera_movements', 
+                                'transitions', 'sound_reapplier', 'captioning'],
+                    help='Specific post-processing steps to run')
+        
+        # Keeping intermediate files
+        parser.add_argument('--keep-intermediates', action='store_true', 
+                            help='Keep intermediate files (default: cleanup)')
+        
+        # Sound effects options
+        parser.add_argument('--sound-effects-volume', type=float, default=0.7,
+                            help='Global volume scale for sound effects (0.1-1.0)')
+        
+        # Background music options
+        parser.add_argument('--music-volume', type=float, default=0.15,
+                            help='Volume level for background music (0.0-1.0)')
+        parser.add_argument('--music-fade-in', type=float, default=2.0,
+                            help='Duration of music fade-in effect in seconds (default: 2.0)')
+        parser.add_argument('--music-fade-out', type=float, default=3.0,
+                            help='Duration of music fade-out effect in seconds (default: 3.0)')
+        parser.add_argument('--no-smart-ducking', action='store_true',
+                            help='Disable smart ducking for background music')
+        
+        # Camera movement options
+        parser.add_argument('--zoom-factor', type=float, default=1.1,
+                            help='Zoom factor for camera movements')
+        parser.add_argument('--shake-intensity', type=float, default=2.0,
+                            help='Intensity of camera shake effect')
+        parser.add_argument('--punchin-factor', type=float, default=1.08,
+                            help='Factor for punch-in effect')
+        parser.add_argument('--camera-frame-rate', type=int, default=30,
+                            help='Frame rate for camera movement effects')
+        
+        # Transition options
+        parser.add_argument('--transition-type', default='cross_fade',
+                            help='Type of transition to apply')
+        parser.add_argument('--transition-duration', type=int, default=20,
+                            help='Duration of transitions in frames')
+        parser.add_argument('--randomize-transitions', action='store_true',
+                            help='Randomize transition types')
+        
+        # Captions options
+        parser.add_argument('--captions-api-url', 
+                            default='https://ai-content-pipeline.onrender.com/caption-video',
+                            help='API URL for captions service')
+        
+        return parser.parse_args()
 
-
-if __name__ == "__main__":
-    args = parse_args()
-    
-    try:
-        # Check if input video exists
-        if not os.path.exists(args.input):
-            logger.error(f"Input video not found: {args.input}")
+    if __name__ == "__main__":
+        args = parse_args()
+        
+        try:
+            # Check if input video exists
+            if not os.path.exists(args.input):
+                logger.error(f"Input video not found: {args.input}")
+                sys.exit(1)
+            
+            # Check if B-roll data exists
+            if not os.path.exists(args.broll_data):
+                logger.error(f"B-roll data not found: {args.broll_data}")
+                sys.exit(1)
+            
+            # Load configuration from file
+            config = PostProcessingOrchestrator.load_config_from_file(args.config)
+            
+            # Override configuration with command line arguments
+            if not "post_processing" in config:
+                config["post_processing"] = {}
+            
+            # Configure steps
+            if args.steps:
+                config["post_processing"]["steps"] = args.steps
+            
+            # Configure sound effects
+            if not "sound_effects" in config:
+                config["sound_effects"] = {}
+            config["sound_effects"]["volume"] = args.sound_effects_volume
+            
+            # Configure background music
+            if not "background_music" in config:
+                config["background_music"] = {}
+            config["background_music"]["volume"] = args.music_volume
+            config["background_music"]["fade_in"] = args.music_fade_in
+            config["background_music"]["fade_out"] = args.music_fade_out
+            config["background_music"]["smart_ducking"] = not args.no_smart_ducking
+            config["background_music"]["music_dir"] = args.music_dir
+            
+            # Configure camera movements
+            if not "camera_movements" in config:
+                config["camera_movements"] = {}
+            config["camera_movements"]["zoom_factor"] = args.zoom_factor
+            config["camera_movements"]["shake_intensity"] = args.shake_intensity
+            config["camera_movements"]["punchin_factor"] = args.punchin_factor
+            config["camera_movements"]["frame_rate"] = args.camera_frame_rate
+            
+            # Configure transitions
+            if not "transitions" in config:
+                config["transitions"] = {}
+            config["transitions"]["type"] = args.transition_type
+            config["transitions"]["duration"] = args.transition_duration
+            config["transitions"]["randomize"] = args.randomize_transitions
+            
+            # Configure captions
+            if not "captioning" in config:
+                config["captioning"] = {}
+            config["captioning"]["api_url"] = args.captions_api_url
+            
+            # Initialize orchestrator
+            orchestrator = PostProcessingOrchestrator(
+                config=config,
+                cache_dir=args.cache_dir,
+                sound_effects_dir=args.sound_effects_dir,
+                music_dir=args.music_dir
+            )
+            
+            # Run post-processing
+            output_path = orchestrator.process(
+                input_video_path=args.input,
+                broll_data_path=args.broll_data,
+                output_video_path=args.output,
+                steps=args.steps,
+                llm_api_key=args.llm_api_key,
+                llm_api_url=args.llm_api_url,
+                clean_intermediates=not args.keep_intermediates
+            )
+            
+            print(f"Post-processing complete. Output saved to: {output_path}")
+            
+        except Exception as e:
+            logger.error(f"Error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             sys.exit(1)
-        
-        # Check if B-roll data exists
-        if not os.path.exists(args.broll_data):
-            logger.error(f"B-roll data not found: {args.broll_data}")
-            sys.exit(1)
-        
-        # Load configuration from file
-        config = PostProcessingOrchestrator.load_config_from_file(args.config)
-        
-        # Override configuration with command line arguments
-        if not "post_processing" in config:
-            config["post_processing"] = {}
-        
-        # Configure steps
-        if args.steps:
-            config["post_processing"]["steps"] = args.steps
-        
-        # Configure sound effects
-        if not "sound_effects" in config:
-            config["sound_effects"] = {}
-        config["sound_effects"]["volume"] = args.sound_effects_volume
-        
-        # Configure background music
-        if not "background_music" in config:
-            config["background_music"] = {}
-        config["background_music"]["volume"] = args.music_volume
-        config["background_music"]["ducking"] = args.music_ducking
-        config["background_music"]["smart_ducking"] = not args.no_smart_ducking
-        
-        # Configure camera movements
-        if not "camera_movements" in config:
-            config["camera_movements"] = {}
-        config["camera_movements"]["zoom_factor"] = args.zoom_factor
-        config["camera_movements"]["shake_intensity"] = args.shake_intensity
-        
-        # Configure transitions
-        if not "transitions" in config:
-            config["transitions"] = {}
-        config["transitions"]["type"] = args.transition_type
-        config["transitions"]["duration"] = args.transition_duration
-        config["transitions"]["randomize"] = args.randomize_transitions
-        
-        # Configure captions
-        if not "captioning" in config:
-            config["captioning"] = {}
-        config["captioning"]["api_url"] = args.captions_api_url
-        
-        # Initialize orchestrator
-        orchestrator = PostProcessingOrchestrator(
-            config=config,
-            cache_dir=args.cache_dir,
-            sound_effects_dir=args.sound_effects_dir,
-            music_dir=args.music_dir
-        )
-        
-        # Run post-processing
-        output_path = orchestrator.process(
-            input_video_path=args.input,
-            broll_data_path=args.broll_data,
-            output_video_path=args.output,
-            steps=args.steps,
-            llm_api_key=args.llm_api_key,
-            llm_api_url=args.llm_api_url,
-            clean_intermediates=not args.keep_intermediates
-        )
-        
-        print(f"Post-processing complete. Output saved to: {output_path}")
-        
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        sys.exit(1)

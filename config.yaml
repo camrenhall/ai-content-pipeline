@@ -47,9 +47,9 @@ default:
       - sound_effects
       - background_music
       # Uncomment these as needed
-      # - camera_movements
-      # - transitions
-      # - captioning
+      - camera_movements
+      - transitions
+      - captioning
   
     # Sound effects configuration
     sound_effects:
@@ -63,16 +63,17 @@ default:
   
     # Background music configuration
     background_music:
-      music_dir: "./assets/background_music"
-      volume: 0.15                    # Base volume for background music (0.0-1.0)
-      ducking: 0.5                    # Ducking amount for dialog (0.0-1.0)
-      smart_ducking: true             # Use smart ducking based on audio analysis
-      fade_in: 2.0                    # Fade-in duration (seconds)
-      fade_out: 3.0                   # Fade-out duration (seconds)
+        enabled: true                     # Whether to enable background music
+        music_dir: "./assets/background_music"  # Directory containing background music files
+        volume: 0.15                      # Base volume for background music (0.0-1.0)
+        ducking: 0.5                      # Ducking amount for dialog (0.0-1.0) 
+        smart_ducking: true               # Use smart ducking based on audio analysis
+        fade_in: 2.0                      # Fade-in duration (seconds)
+        fade_out: 3.0                     # Fade-out duration (seconds)
   
     # Camera movements configuration (zoom, shake, punch-in)
     camera_movements:
-      enabled: false                  # Enable camera movement effects
+      enabled: true                  # Enable camera movement effects
       zoom_factor: 1.1                # Maximum zoom factor for slow zoom
       shake_intensity: 2.0            # Maximum pixel displacement for camera shake
       punchin_factor: 1.08            # Maximum zoom factor for punch-in effect
@@ -85,19 +86,19 @@ default:
   
     # Video transitions configuration
     transitions:
-      enabled: false                  # Enable transition effects
+      enabled: true                  # Enable transition effects
       type: "cross_fade"              # Default transition type
       duration: 20                    # Transition duration in frames
-      randomize: false                # Randomize transition types
+      randomize: true                # Randomize transition types
       transitions_file: "./transitions.json"  # Path to transitions configuration file
       max_transitions: 5              # Maximum number of transitions to insert
   
     # Captioning configuration
     captioning:
-      enabled: false                  # Enable captioning
+      enabled: true                  # Enable captioning
       api_url: "https://ai-content-pipeline.onrender.com/caption-video"
-      font_size: 16                   # Font size for captions
-      position: "bottom"              # Caption position (top, bottom, middle)
+      # font_size: 16                   # Font size for captions
+      # position: "bottom"              # Caption position (top, bottom, middle)
 
 # Development profile
 development:
