@@ -113,15 +113,15 @@ class HeyGenClient:
         if landscape_avatar:
             logger.info("Adjusting settings for landscape avatar in portrait video")
             # Override the provided settings with optimized values for landscape avatars
-            if avatar_scale < 1.7:  # Only override if not already set to a higher value
-                avatar_scale = 1.8  # Larger scale to maximize avatar size
+            if avatar_scale < 3.2:  # Only override if not already set to a higher value
+                avatar_scale = 3.2  # Larger scale to maximize avatar size
                 logger.info(f"Setting avatar_scale to {avatar_scale} for landscape avatar")
             
             # Adjust vertical position if not specified
             if avatar_offset_y == 0.0:
                 # Position slightly higher in the frame for better composition
                 # Values range from -1.0 (bottom) to 1.0 (top)
-                avatar_offset_y = 0.2
+                avatar_offset_y = 0.0
                 logger.info(f"Setting avatar_offset_y to {avatar_offset_y} for landscape avatar")
         
         # Prepare the API request
