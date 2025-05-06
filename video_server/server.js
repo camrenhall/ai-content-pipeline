@@ -9,6 +9,9 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+const MAX_ATTEMPTS = 20;
+const DELAY_MS = 6000;
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -150,7 +153,7 @@ async function processThroughCreatomate(videoUrl) {
 }
 
 // Function to poll render status until complete
-async function pollRenderStatus(renderId, maxAttempts = 10) {
+async function pollRenderStatus(renderId, maxAttempts = MAX_ATTEMPTS) {
   let attempts = 0;
   
   while (attempts < maxAttempts) {
@@ -173,7 +176,7 @@ async function pollRenderStatus(renderId, maxAttempts = 10) {
       }
       
       // Wait before polling again
-      await new Promise(resolve => setTimeout(resolve, 3000)); // 3 seconds
+      await new Promise(resolve => setTimeout(resolve, DELAY_MS)); // 3 seconds
       attempts++;
     } catch (error) {
       console.error('Error polling render status:', error);
