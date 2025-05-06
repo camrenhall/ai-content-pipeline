@@ -1066,7 +1066,7 @@ class PipelineOrchestrator:
                 "success": False,
                 "error": str(e)
             }
-            
+    
     def _apply_post_processing(self, context: PipelineContext) -> Dict[str, Any]:
         """Step 7: Apply post-processing effects to the assembled video."""
         logger.info("Applying post-processing effects")
@@ -1082,11 +1082,13 @@ class PipelineOrchestrator:
             raise ValueError(f"Assembled video not found at {input_video_path}")
         
         # Get B-roll data path from previous steps
-        retrieval_result = context.intermediate_outputs.get("retrieve_videos")
-        if not retrieval_result:
-            raise ValueError("Video retrieval result not found in context")
+        broll_data_path = context.intermediate_outputs.get("retrieve_videos", {}).get("retrieved_videos_path")
+        if not broll_data_path:
+            # Try to get from transform_videos step if not in retrieve_videos
+            broll_data_path = context.intermediate_outputs.get("transform_videos", {}).get("transformed_videos_path")
         
-        broll_data_path = retrieval_result["retrieved_videos_path"]
+        if not broll_data_path:
+            raise ValueError("B-roll data not found in context")
         
         # Determine output path
         output_video_path = os.path.join(
@@ -1101,25 +1103,39 @@ class PipelineOrchestrator:
         # Get post-processing configuration
         post_processing_config = context.config.get("post_processing", {})
         
-        # Initialize orchestrator
+        # Get background music configuration
+        bg_music_config = context.config.get("background_music", {})
+        
+        # Initialize orchestrator with updated configuration
         orchestrator = PostProcessingOrchestrator(
-            config=post_processing_config,
+            config=context.config,
             cache_dir=post_processing_cache_dir,
-            sound_effects_dir=context.config.get("post_processing", {}).get(
+            sound_effects_dir=post_processing_config.get("sound_effects", {}).get(
                 "sound_effects_dir", "./assets/sound_effects"
-            )
+            ),
+            music_dir=bg_music_config.get("music_dir", "./assets/background_music")
         )
+        
+        # Get enabled steps
+        enabled_steps = post_processing_config.get("steps", [])
+        
+        # Get LLM API information from context
+        llm_api_key = context.config.get("api_keys", {}).get("llm")
+        llm_api_url = context.config.get("llm_api_url")
         
         # Run post-processing
         final_output_path = orchestrator.process(
             input_video_path=input_video_path,
             broll_data_path=broll_data_path,
             output_video_path=output_video_path,
-            steps=post_processing_config.get("steps", None)
+            steps=enabled_steps,
+            llm_api_key=llm_api_key,
+            llm_api_url=llm_api_url,
+            clean_intermediates=True  # Clean up intermediate files after processing
         )
         
         # Store artifact path
-        self.steps["post_processing"].artifacts["post_processed_video_path"] = final_output_path
+        self.steps["post_process"].artifacts["post_processed_video_path"] = final_output_path
         
         # Update the final output video path in context
         context.output_video_path = final_output_path
@@ -1129,7 +1145,7 @@ class PipelineOrchestrator:
             "input_video_path": input_video_path,
             "output_video_path": final_output_path,
             "broll_data_path": broll_data_path,
-            "applied_steps": post_processing_config.get("steps", ["sound_effects"]),
+            "applied_steps": enabled_steps,
             "success": os.path.exists(final_output_path)
         }
 
