@@ -39,12 +39,78 @@ default:
   retry_delay_base: 2                 # Base for exponential backoff (seconds)
   max_retries_per_step: 3             # Maximum retries per step
 
+  # Post-processing configuration
+  post_processing:
+    # Enable/disable specific post-processing steps
+    enabled: true
+    steps:
+      - sound_effects
+      - background_music
+      # Uncomment these as needed
+      # - camera_movements
+      # - transitions
+      # - captioning
+  
+    # Sound effects configuration
+    sound_effects:
+      sound_effects_dir: "./assets/sound_effects"
+      volume: 0.7                     # Global volume scale (0.1-1.0)
+      enable_transitions: true        # Enable transition sound effects
+      enable_ambient: true            # Enable ambient sound effects
+      randomize_selection: true       # Randomize sound effect selection
+      max_sounds_per_video: 5         # Maximum number of sound effects per video
+      min_gap: 3.0                    # Minimum gap between sound effects (seconds)
+  
+    # Background music configuration
+    background_music:
+      music_dir: "./assets/background_music"
+      volume: 0.15                    # Base volume for background music (0.0-1.0)
+      ducking: 0.5                    # Ducking amount for dialog (0.0-1.0)
+      smart_ducking: true             # Use smart ducking based on audio analysis
+      fade_in: 2.0                    # Fade-in duration (seconds)
+      fade_out: 3.0                   # Fade-out duration (seconds)
+  
+    # Camera movements configuration (zoom, shake, punch-in)
+    camera_movements:
+      enabled: false                  # Enable camera movement effects
+      zoom_factor: 1.1                # Maximum zoom factor for slow zoom
+      shake_intensity: 2.0            # Maximum pixel displacement for camera shake
+      punchin_factor: 1.08            # Maximum zoom factor for punch-in effect
+      frame_rate: 30                  # Frame rate for the output video
+      zoom_duration: 100              # Number of frames for the zoom-in effect
+      shake_duration: 60              # Number of frames for the camera shake effect
+      punchin_duration: 50            # Number of frames for the punch-in effect
+      normal_duration: 40             # Number of frames between effects
+      shake_interval: 450             # Minimum frames between shake effects
+  
+    # Video transitions configuration
+    transitions:
+      enabled: false                  # Enable transition effects
+      type: "cross_fade"              # Default transition type
+      duration: 20                    # Transition duration in frames
+      randomize: false                # Randomize transition types
+      transitions_file: "./transitions.json"  # Path to transitions configuration file
+      max_transitions: 5              # Maximum number of transitions to insert
+  
+    # Captioning configuration
+    captioning:
+      enabled: false                  # Enable captioning
+      api_url: "https://ai-content-pipeline.onrender.com/caption-video"
+      font_size: 16                   # Font size for captions
+      position: "bottom"              # Caption position (top, bottom, middle)
+
 # Development profile
 development:
   cache_dir: "./dev_cache"
   max_broll_opportunities: 2          # Reduced for faster development testing
   use_llm_for_keywords: false         # Use rule-based approach for faster development
   max_results_per_query: 2
+  post_processing:
+    enabled: true
+    steps:
+      - sound_effects
+    sound_effects:
+      volume: 0.7
 
 # Production profile
 production:
@@ -52,6 +118,15 @@ production:
   max_retries_per_step: 5             # More retries for production reliability
   max_broll_opportunities: 8          # More opportunities for production quality
   retry_delay_base: 5                 # Longer backoff time for production stability
+  post_processing:
+    enabled: true
+    steps:
+      - sound_effects
+      - background_music
+      - camera_movements
+      - transitions
+      - captioning
+    # Use default configuration for all other settings
 
 # High-quality profile
 high_quality:
@@ -61,6 +136,25 @@ high_quality:
   max_results_per_query: 8
   target_video_width: 1080
   target_video_height: 1920
+  post_processing:
+    enabled: true
+    steps:
+      - sound_effects
+      - background_music
+      - camera_movements
+      - transitions
+      - captioning
+    sound_effects:
+      volume: 0.8
+      max_sounds_per_video: 7
+    background_music:
+      volume: 0.12
+      smart_ducking: true
+    camera_movements:
+      zoom_factor: 1.05               # More subtle zoom for higher quality
+      shake_intensity: 1.5            # More subtle shake for higher quality
+    transitions:
+      randomize: true                 # Use random transitions for variety
 
 # Fast processing profile
 fast:
@@ -69,54 +163,8 @@ fast:
   max_broll_opportunities: 3
   max_results_per_query: 3
   parallel_execution: true
-
   post_processing:
-  # Enable/disable specific post-processing steps
-  enabled: true
-  steps:
-    - sound_effects
-    # Uncomment these as they are implemented
-    # - video_transitions
-    # - zoom_effects
-    # - captioning
-  
-  # Sound effects configuration
-  sound_effects:
-    sound_effects_dir: "./assets/sound_effects"
-    fade_duration: 0.3
-    volume: 0.7
-    max_sounds_per_video: 5
-    min_gap: 3.0
-  
-  # Video transitions configuration (placeholder for future implementation)
-  video_transitions:
-    enabled: false
-    transition_types:
-      - fade
-      - wipe
-      - dissolve
-    default_duration: 0.5
-  
-  # Zoom effects configuration (placeholder for future implementation)
-  zoom_effects:
-    enabled: false
-    zoom_intensity: 1.2
-    zoom_duration: 1.5
-    
-  # Captioning configuration (placeholder for future implementation)
-  captioning:
-    enabled: false
-    api_url: ""
-    api_key: ""
-    font_size: 16
-    position: "bottom"
-
-  # Background music configuration
-  background_music:
     enabled: true
-    music_dir: "./assets/background_music"
-    volume: 0.15
-    ducking: 0.5
-    smart_ducking: true
-    fade_in: 2.0
-    fade_out: 3.0
+    steps:
+      - sound_effects
+    # Minimal post-processing for fast results
