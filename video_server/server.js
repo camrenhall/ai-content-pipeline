@@ -36,7 +36,7 @@ app.get('/', (req, res) => {
 });
 
 // Process video route
-app.post('/process-video', async (req, res) => {
+app.post('/caption-video', async (req, res) => {
   try {
     // Check if file was uploaded
     if (!req.files || !req.files.video) {
