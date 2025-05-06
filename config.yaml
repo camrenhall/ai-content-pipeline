@@ -49,7 +49,7 @@ default:
       # Uncomment these as needed
       - camera_movements
       - transitions
-      - captioning
+      # - captioning # EXPENSIVE
   
     # Sound effects configuration
     sound_effects:
