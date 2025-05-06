@@ -89,43 +89,14 @@ app.post('/caption-video', async (req, res) => {
 // Serve the temporary files
 app.use('/tmp', express.static(tmpDir));
 
-// Function to process the video through Creatomate
 async function processThroughCreatomate(videoUrl) {
   try {
-    // Creatomate API request
     const response = await axios.post(
       'https://api.creatomate.com/v1/renders',
       {
-        "output_format": "mp4",
-        "source": {
-          "elements": [
-            {
-              "type": "video",
-              "id": "source-video",
-              "source": videoUrl
-            },
-            {
-              "type": "text",
-              "transcript_source": "source-video",
-              "transcript_effect": "highlight",
-              "transcript_maximum_length": 14,
-              "y": "82%",
-              "width": "81%",
-              "height": "35%",
-              "x_alignment": "50%",
-              "y_alignment": "50%",
-              "fill_color": "#ffffff",
-              "stroke_color": "#000000",
-              "stroke_width": "1.6 vmin",
-              "font_family": "Montserrat",
-              "font_weight": "700",
-              "font_size": "9.29 vmin",
-              "background_color": "rgba(216,216,216,0)",
-              "background_x_padding": "31%",
-              "background_y_padding": "17%",
-              "background_border_radius": "31%"
-            }
-          ]
+        template_id: process.env.CREATOMATE_TEMPLATE_ID,
+        modifications: {
+          "Video-DHM.source": videoUrl
         }
       },
       {
@@ -136,16 +107,13 @@ async function processThroughCreatomate(videoUrl) {
       }
     );
 
-    // Check if render was created successfully
     if (response.data && response.data.length > 0) {
-      // Initially, the render might still be processing
       const renderId = response.data[0].id;
-      
-      // Poll for render completion
       return await pollRenderStatus(renderId);
     } else {
       throw new Error('No render data returned from Creatomate');
     }
+
   } catch (error) {
     console.error('Error in Creatomate API request:', error);
     throw error;
