@@ -20,10 +20,6 @@
     ],
     "enabled_transitions": [
         "cross_fade",
-        "slide_left",
-        "slide_right",
-        "slide_up",
-        "slide_down",
         "zoom_blend",
         "whip_pan",
         "overlay_dissolve",
@@ -31,7 +27,6 @@
         "particle",
         "shatter",
         "pixelate",
-        "cube_rotate",
-        "swirl"
+        "cube_rotate"
     ]
 }

@@ -418,9 +418,10 @@ class PostProcessingOrchestrator:
                 )
                 
                 # Process with transitions
+                print(f"DEBUG: randomize value from config: {transition_config.get('randomize', False)}")
                 transition_manager.process_video_with_motion_transitions(
                     transition_type=transition_config.get("type", "cross_fade"),
-                    randomize=transition_config.get("randomize", False),
+                    randomize=transition_config.get("randomize", True),
                     transitions_file=transition_config.get("transitions_file", "./transitions.json")
                 )
                 

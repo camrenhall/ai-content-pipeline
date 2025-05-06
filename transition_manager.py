@@ -1111,6 +1111,7 @@ class VideoTransitionEffects:
             randomize: Whether to randomize transitions for each scene
             transitions_file: Path to a JSON file with transition configurations
         """
+        print(f"DEBUG: randomize parameter received: {randomize}")
         # Load transitions if file is provided
         if transitions_file and os.path.exists(transitions_file):
             available_transitions = self.load_transitions_from_file(transitions_file)
@@ -1134,6 +1135,7 @@ class VideoTransitionEffects:
         # Determine which transition function to use for each scene change
         transition_funcs = []
         
+        print(f"DEBUG: randomize check about to be performed with value: {randomize}")
         if randomize:
             # Randomly select a transition for each scene change
             available_names = list(available_transitions.keys())
