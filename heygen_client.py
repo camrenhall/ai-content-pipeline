@@ -113,7 +113,7 @@ class HeyGenClient:
         if landscape_avatar:
             logger.info("Adjusting settings for landscape avatar in portrait video")
             # Override the provided settings with optimized values for landscape avatars
-            if avatar_scale < 3.2:  # Only override if not already set to a higher value
+            if avatar_scale < 1.7:  # Only override if not already set to a higher value
                 avatar_scale = 3.2  # Larger scale to maximize avatar size
                 logger.info(f"Setting avatar_scale to {avatar_scale} for landscape avatar")
             
