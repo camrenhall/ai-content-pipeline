@@ -255,7 +255,7 @@ class PipelineOrchestrator:
     Main orchestrator class that manages the content pipeline workflow.
     Supports both traditional video enhancement and generation from scratch.
     """
-    
+        
     def __init__(
         self, 
         output_video_path: str,
@@ -278,6 +278,7 @@ class PipelineOrchestrator:
         heygen_voice_id: Optional[str] = None,
         heygen_background_url: Optional[str] = None,
         heygen_background_color: str = "#f6f6fc",
+        heygen_landscape_avatar: bool = False,  # Add this new parameter
     ):
         """
         Initialize the pipeline orchestrator with flexible input options.
@@ -301,6 +302,7 @@ class PipelineOrchestrator:
             heygen_voice_id: HeyGen voice ID
             heygen_background_url: URL of background image/video for HeyGen
             heygen_background_color: Background color for HeyGen
+            heygen_landscape_avatar: Whether the avatar is in landscape format (16:9)
         """
         # Store all initialization parameters
         self.output_video_path = output_video_path
@@ -322,6 +324,7 @@ class PipelineOrchestrator:
         self.heygen_voice_id = heygen_voice_id
         self.heygen_background_url = heygen_background_url
         self.heygen_background_color = heygen_background_color
+        self.heygen_landscape_avatar = heygen_landscape_avatar  # Store the new parameter
         
         # Initialize config manager and load configuration
         self.config_manager = ConfigManager(config_path, profile)
@@ -1010,7 +1013,8 @@ class PipelineOrchestrator:
             talking_photo_id=self.heygen_talking_photo_id,
             background_url=self.heygen_background_url,
             background_color=self.heygen_background_color,
-            dimension={"width": 1080, "height": 1920}  # Portrait mode
+            dimension={"width": 1080, "height": 1920},  # Portrait mode
+            landscape_avatar=self.heygen_landscape_avatar  # Pass the landscape_avatar parameter
         )
         
         logger.info(f"Video generated and saved to {output_path}")
@@ -1609,7 +1613,7 @@ def parse_args():
     
     # Script generation options
     parser.add_argument('--target-duration', type=int, default=20, choices=[10, 15, 20, 25, 30, 35, 40],
-                        help='Target duration in seconds for script generation')
+                      help='Target duration in seconds for script generation')
     
     # HeyGen options
     heygen_group = parser.add_argument_group('HeyGen Options')
@@ -1620,6 +1624,8 @@ def parse_args():
     heygen_group.add_argument('--background-url', help='URL of background image/video for HeyGen')
     heygen_group.add_argument('--background-color', default='#f6f6fc', 
                             help='Background color for HeyGen (hex format)')
+    heygen_group.add_argument('--landscape-avatar', action='store_true',
+                            help='Optimize settings for a landscape avatar in portrait video')
     
     args = parser.parse_args()
     
@@ -1658,6 +1664,7 @@ def main():
             heygen_voice_id=args.voice_id,
             heygen_background_url=args.background_url,
             heygen_background_color=args.background_color,
+            heygen_landscape_avatar=args.landscape_avatar,  # Pass the landscape_avatar parameter
         )
         
         # Run the pipeline
