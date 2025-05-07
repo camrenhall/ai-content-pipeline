@@ -1,4 +1,4 @@
-# pipeline_orchestrator.py
+# Modified pipeline_orchestrator.py with integrated script generation and HeyGen features
 import argparse
 import concurrent.futures
 import logging
@@ -23,8 +23,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pipeline_orchestrator")
 
-# Import pipeline components
+# Import pipeline components - both existing and new ones
 try:
+    # Core pipeline components
     from script_analyzer import ScriptAnalyzer, Transcript
     from broll_opportunity_detector import BRollOpportunityDetector
     from keyword_extractor import KeywordExtractor
@@ -33,6 +34,10 @@ try:
     from enhanced_broll_inserter import insert_multiple_brolls, save_edited_video
     from post_processing_orchestrator import PostProcessingOrchestrator
     from moviepy import VideoFileClip
+    
+    # New components
+    from script_generator import ScriptGenerator
+    from heygen_client import HeyGenClient
 except ImportError as e:
     logger.error(f"Failed to import pipeline components: {e}")
     logger.error("Please ensure all pipeline components are installed and in the Python path.")
@@ -84,15 +89,28 @@ class PipelineState(Enum):
 class PipelineContext:
     """Context object passed between pipeline steps."""
     config: Dict[str, Any]
-    input_video_path: str
     output_video_path: str
     cache_dir: str
     intermediate_outputs: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    input_video_path: Optional[str] = None
+    script_text: Optional[str] = None
+    script_path: Optional[str] = None
+    prompt: Optional[str] = None
     
     def get_cache_path(self, step_name: str, extension: str = "json") -> str:
         """Generate a cache path for a specific step."""
-        filename = f"{hashlib.md5(self.input_video_path.encode()).hexdigest()}_{step_name}.{extension}"
+        source_id = ""
+        if self.input_video_path:
+            source_id = hashlib.md5(self.input_video_path.encode()).hexdigest()
+        elif self.script_text:
+            source_id = hashlib.md5(self.script_text.encode()).hexdigest()
+        elif self.prompt:
+            source_id = hashlib.md5(self.prompt.encode()).hexdigest()
+        else:
+            source_id = hashlib.md5(str(time.time()).encode()).hexdigest()
+            
+        filename = f"{source_id}_{step_name}.{extension}"
         return os.path.join(self.cache_dir, filename)
 
 
@@ -177,7 +195,9 @@ class ConfigManager:
             api_key_mapping = {
                 "ASSEMBLYAI_API_KEY": "assemblyai",
                 "LLM_API_KEY": "llm",
-                "PEXELS_API_KEY": "pexels"
+                "PEXELS_API_KEY": "pexels",
+                "OPENAI_API_KEY": "openai",
+                "HEYGEN_API_KEY": "heygen"
             }
             
             # Add API keys from secrets
@@ -210,6 +230,12 @@ class ConfigManager:
         for key in required_api_keys:
             if key not in config["api_keys"] or not config["api_keys"][key]:
                 logger.warning(f"Missing API key for {key}. Some pipeline steps may fail.")
+                
+        # Check new API keys
+        new_api_keys = ["openai", "heygen"]
+        for key in new_api_keys:
+            if key not in config["api_keys"] or not config["api_keys"][key]:
+                logger.warning(f"Missing API key for {key}. Script generation or HeyGen features may not work.")
     
     def _apply_env_vars(self, config: Dict[str, Any]) -> None:
         """Apply environment variable overrides to config."""
@@ -227,11 +253,11 @@ class ConfigManager:
 class PipelineOrchestrator:
     """
     Main orchestrator class that manages the content pipeline workflow.
+    Supports both traditional video enhancement and generation from scratch.
     """
     
     def __init__(
         self, 
-        input_video_path: str,
         output_video_path: str,
         config_path: str = "config.yaml",
         profile: str = "default",
@@ -239,14 +265,63 @@ class PipelineOrchestrator:
         end_step: Optional[str] = None,
         cache_dir: Optional[str] = None,
         force_refresh: bool = False,
-        parallel_execution: bool = False
+        parallel_execution: bool = False,
+        input_video_path: Optional[str] = None,
+        script_path: Optional[str] = None,
+        script_text: Optional[str] = None,
+        prompt: Optional[str] = None,
+        # Script generation parameters
+        target_duration: int = 20,
+        # HeyGen parameters
+        heygen_avatar_id: Optional[str] = None,
+        heygen_talking_photo_id: Optional[str] = None,
+        heygen_voice_id: Optional[str] = None,
+        heygen_background_url: Optional[str] = None,
+        heygen_background_color: str = "#f6f6fc",
     ):
-        self.input_video_path = input_video_path
+        """
+        Initialize the pipeline orchestrator with flexible input options.
+        
+        Args:
+            output_video_path: Path for the final output video
+            config_path: Path to configuration file
+            profile: Configuration profile to use
+            start_step: Start pipeline from this step
+            end_step: End pipeline at this step
+            cache_dir: Custom cache directory
+            force_refresh: Force refresh and ignore cache
+            parallel_execution: Enable parallel execution where possible
+            input_video_path: Path to an existing input video (optional)
+            script_path: Path to a script file (optional)
+            script_text: Direct script text (optional)
+            prompt: Natural language prompt for script generation (optional)
+            target_duration: Target video duration in seconds for script generation
+            heygen_avatar_id: HeyGen avatar ID
+            heygen_talking_photo_id: HeyGen talking photo ID
+            heygen_voice_id: HeyGen voice ID
+            heygen_background_url: URL of background image/video for HeyGen
+            heygen_background_color: Background color for HeyGen
+        """
+        # Store all initialization parameters
         self.output_video_path = output_video_path
+        self.input_video_path = input_video_path
+        self.script_path = script_path
+        self.script_text = script_text
+        self.prompt = prompt
         self.start_step = start_step
         self.end_step = end_step
         self.force_refresh = force_refresh
         self.parallel_execution = parallel_execution
+        
+        # Store script generation parameters
+        self.target_duration = target_duration
+        
+        # Store HeyGen parameters
+        self.heygen_avatar_id = heygen_avatar_id
+        self.heygen_talking_photo_id = heygen_talking_photo_id
+        self.heygen_voice_id = heygen_voice_id
+        self.heygen_background_url = heygen_background_url
+        self.heygen_background_color = heygen_background_color
         
         # Initialize config manager and load configuration
         self.config_manager = ConfigManager(config_path, profile)
@@ -256,12 +331,23 @@ class PipelineOrchestrator:
         self.cache_dir = cache_dir or self.config.get("cache_dir", "./cache")
         os.makedirs(self.cache_dir, exist_ok=True)
         
+        # Create subdirectories for different step outputs
+        for subdir in ["scripts", "videos", "transcripts", "opportunities", "keywords", "transformed_videos"]:
+            os.makedirs(os.path.join(self.cache_dir, subdir), exist_ok=True)
+        
+        # Determine pipeline mode based on input
+        self.pipeline_mode = self._determine_pipeline_mode()
+        logger.info(f"Pipeline mode: {self.pipeline_mode}")
+        
         # Set up pipeline context
         self.context = PipelineContext(
             config=self.config,
-            input_video_path=input_video_path,
             output_video_path=output_video_path,
-            cache_dir=self.cache_dir
+            cache_dir=self.cache_dir,
+            input_video_path=input_video_path,
+            script_text=script_text,
+            script_path=script_path,
+            prompt=prompt
         )
         
         # Initialize pipeline state
@@ -269,12 +355,28 @@ class PipelineOrchestrator:
         self.start_time = None
         self.end_time = None
         
-        # Define pipeline steps
+        # Define pipeline steps based on mode
         self.steps = {}
         self._define_pipeline_steps()
         
         # Setup logging to file
         self._setup_file_logging()
+    
+    def _determine_pipeline_mode(self) -> str:
+        """
+        Determine the pipeline mode based on the provided inputs.
+        
+        Returns:
+            Mode string: "enhance", "from_script", or "from_prompt"
+        """
+        if self.input_video_path:
+            return "enhance"
+        elif self.script_text or self.script_path:
+            return "from_script"
+        elif self.prompt:
+            return "from_prompt"
+        else:
+            raise ValueError("No input source provided. Must provide one of: input_video_path, script_path, script_text, or prompt")
     
     def _setup_file_logging(self):
         """Set up logging to file."""
@@ -295,17 +397,13 @@ class PipelineOrchestrator:
         logger.info(f"Logging to file: {log_file}")
     
     def _define_pipeline_steps(self):
-        """Define all steps in the pipeline with their dependencies."""
-        self.steps = {
-            "analyze_script": PipelineStep(
-                name="analyze_script",
-                function=self._analyze_script,
-                dependencies=[]
-            ),
+        """Define all steps in the pipeline with their dependencies based on mode."""
+        # Common post-processing steps for all modes
+        common_steps = {
             "detect_broll_opportunities": PipelineStep(
                 name="detect_broll_opportunities",
                 function=self._detect_broll_opportunities,
-                dependencies=["analyze_script"]
+                dependencies=["transcript_ready"]
             ),
             "extract_keywords": PipelineStep(
                 name="extract_keywords",
@@ -325,7 +423,7 @@ class PipelineOrchestrator:
             "assemble_video": PipelineStep(
                 name="assemble_video",
                 function=self._assemble_video,
-                dependencies=["transform_videos"]
+                dependencies=["transform_videos", "video_ready"]
             ),
             "post_process": PipelineStep(
                 name="post_process",
@@ -333,6 +431,88 @@ class PipelineOrchestrator:
                 dependencies=["assemble_video"]
             )
         }
+        
+        # Mode-specific steps
+        if self.pipeline_mode == "enhance":
+            # Traditional pipeline with existing video
+            mode_steps = {
+                "analyze_script": PipelineStep(
+                    name="analyze_script",
+                    function=self._analyze_script,
+                    dependencies=[]
+                ),
+                "transcript_ready": PipelineStep(
+                    name="transcript_ready",
+                    function=self._verify_transcript_ready,
+                    dependencies=["analyze_script"]
+                ),
+                "video_ready": PipelineStep(
+                    name="video_ready",
+                    function=self._verify_video_ready,
+                    dependencies=[]
+                )
+            }
+        elif self.pipeline_mode == "from_script":
+            # Generate video from existing script
+            mode_steps = {
+                "load_script": PipelineStep(
+                    name="load_script",
+                    function=self._load_script,
+                    dependencies=[]
+                ),
+                "generate_video": PipelineStep(
+                    name="generate_video",
+                    function=self._generate_video_from_script,
+                    dependencies=["load_script"]
+                ),
+                "analyze_script": PipelineStep(
+                    name="analyze_script",
+                    function=self._analyze_script,
+                    dependencies=["generate_video"]
+                ),
+                "transcript_ready": PipelineStep(
+                    name="transcript_ready",
+                    function=self._verify_transcript_ready,
+                    dependencies=["analyze_script"]
+                ),
+                "video_ready": PipelineStep(
+                    name="video_ready",
+                    function=self._verify_video_ready,
+                    dependencies=["generate_video"]
+                )
+            }
+        elif self.pipeline_mode == "from_prompt":
+            # Generate script from prompt, then generate video
+            mode_steps = {
+                "generate_script": PipelineStep(
+                    name="generate_script",
+                    function=self._generate_script_from_prompt,
+                    dependencies=[]
+                ),
+                "generate_video": PipelineStep(
+                    name="generate_video",
+                    function=self._generate_video_from_script,
+                    dependencies=["generate_script"]
+                ),
+                "analyze_script": PipelineStep(
+                    name="analyze_script",
+                    function=self._analyze_script,
+                    dependencies=["generate_video"]
+                ),
+                "transcript_ready": PipelineStep(
+                    name="transcript_ready",
+                    function=self._verify_transcript_ready,
+                    dependencies=["analyze_script"]
+                ),
+                "video_ready": PipelineStep(
+                    name="video_ready",
+                    function=self._verify_video_ready,
+                    dependencies=["generate_video"]
+                )
+            }
+        
+        # Combine mode-specific steps with common steps
+        self.steps = {**mode_steps, **common_steps}
     
     def _get_execution_order(self) -> List[str]:
         """
@@ -467,9 +647,15 @@ class PipelineOrchestrator:
             with open(cache_path, 'r') as f:
                 data = json.load(f)
                 
-            # Check if cache is valid (input video unchanged)
-            if data.get("input_video") != self.input_video_path:
+            # Validate cache based on the input source
+            if self.input_video_path and data.get("input_video") != self.input_video_path:
                 logger.info(f"Cache for {step_name} is for different input video, ignoring")
+                return None
+            elif self.script_text and data.get("script_hash") != hashlib.md5(self.script_text.encode()).hexdigest():
+                logger.info(f"Cache for {step_name} is for different script, ignoring")
+                return None
+            elif self.prompt and data.get("prompt_hash") != hashlib.md5(self.prompt.encode()).hexdigest():
+                logger.info(f"Cache for {step_name} is for different prompt, ignoring")
                 return None
                 
             return data.get("result")
@@ -485,10 +671,17 @@ class PipelineOrchestrator:
             # Create cache data with metadata
             cache_data = {
                 "step": step_name,
-                "input_video": self.input_video_path,
                 "timestamp": time.time(),
                 "result": result
             }
+            
+            # Add input source information
+            if self.input_video_path:
+                cache_data["input_video"] = self.input_video_path
+            elif self.script_text:
+                cache_data["script_hash"] = hashlib.md5(self.script_text.encode()).hexdigest()
+            elif self.prompt:
+                cache_data["prompt_hash"] = hashlib.md5(self.prompt.encode()).hexdigest()
             
             with open(cache_path, 'w') as f:
                 json.dump(cache_data, f, indent=2)
@@ -502,7 +695,12 @@ class PipelineOrchestrator:
         self.state = PipelineState.RUNNING
         self.start_time = time.time()
         
-        logger.info(f"Starting pipeline for video: {self.input_video_path}")
+        if self.input_video_path:
+            logger.info(f"Starting pipeline for video: {self.input_video_path}")
+        elif self.script_text or self.script_path:
+            logger.info(f"Starting pipeline from script")
+        elif self.prompt:
+            logger.info(f"Starting pipeline from prompt: '{self.prompt}'")
         
         try:
             # Get execution order based on dependencies
@@ -556,7 +754,7 @@ class PipelineOrchestrator:
             if status == PipelineStepStatus.FAILED:
                 logger.error(f"Step {step_name} failed, stopping pipeline execution")
                 break
-    
+                
     def _run_parallel(self, execution_order: List[str]) -> None:
         """Run pipeline steps with parallelism when possible."""
         pending_steps = set(execution_order)
@@ -621,8 +819,8 @@ class PipelineOrchestrator:
     def _generate_report(self) -> None:
         """Generate an execution report with metrics."""
         report = {
-            "pipeline_id": hashlib.md5(f"{self.input_video_path}_{time.time()}".encode()).hexdigest()[:8],
-            "input_video": self.input_video_path,
+            "pipeline_id": hashlib.md5(f"{self.output_video_path}_{time.time()}".encode()).hexdigest()[:8],
+            "pipeline_mode": self.pipeline_mode,
             "output_video": self.output_video_path,
             "start_time": self.start_time,
             "end_time": self.end_time,
@@ -630,6 +828,16 @@ class PipelineOrchestrator:
             "status": self.state.name,
             "steps": {}
         }
+        
+        # Add input source information
+        if self.input_video_path:
+            report["input_video"] = self.input_video_path
+        elif self.script_path:
+            report["script_path"] = self.script_path
+        elif self.script_text:
+            report["script_length"] = len(self.script_text)
+        elif self.prompt:
+            report["prompt"] = self.prompt
         
         for step_name, step in self.steps.items():
             report["steps"][step_name] = {
@@ -654,9 +862,181 @@ class PipelineOrchestrator:
     
     # Pipeline step implementations
     
+    # ---------- Script Generation Steps ----------
+    
+    def _generate_script_from_prompt(self, context: PipelineContext) -> Dict[str, Any]:
+        """
+        Step: Generate a script from a natural language prompt.
+        """
+        logger.info(f"Generating script from prompt: '{self.prompt}'")
+        
+        # Get API key from config
+        api_key = context.config["api_keys"].get("openai")
+        if not api_key:
+            raise ValueError("OpenAI API key is required for script generation")
+        
+        # Create script cache directory
+        script_cache_dir = os.path.join(context.cache_dir, "scripts")
+        os.makedirs(script_cache_dir, exist_ok=True)
+        
+        # Initialize script generator
+        generator = ScriptGenerator(api_key=api_key)
+        
+        # Generate script
+        script_text = generator.generate_script(
+            prompt=self.prompt,
+            duration=self.target_duration
+        )
+        
+        # Save script to file
+        script_path = os.path.join(
+            script_cache_dir,
+            f"{hashlib.md5(self.prompt.encode()).hexdigest()}_script.txt"
+        )
+        
+        with open(script_path, 'w') as f:
+            f.write(script_text)
+            
+        logger.info(f"Script generated and saved to {script_path}")
+        
+        # Store artifacts and update context
+        self.steps["generate_script"].artifacts["script_path"] = script_path
+        context.script_path = script_path
+        context.script_text = script_text
+        
+        return {
+            "script_text": script_text,
+            "script_path": script_path,
+            "word_count": len(script_text.split()),
+            "character_count": len(script_text)
+        }
+    
+    def _load_script(self, context: PipelineContext) -> Dict[str, Any]:
+        """
+        Step: Load a script from a file or use provided script text.
+        """
+        # Check if script text is already provided
+        if context.script_text:
+            logger.info("Using provided script text")
+            script_text = context.script_text
+            
+            # Save script to file for reference
+            script_cache_dir = os.path.join(context.cache_dir, "scripts")
+            os.makedirs(script_cache_dir, exist_ok=True)
+            
+            script_path = os.path.join(
+                script_cache_dir,
+                f"{hashlib.md5(script_text.encode()).hexdigest()}_script.txt"
+            )
+            
+            with open(script_path, 'w') as f:
+                f.write(script_text)
+                
+            context.script_path = script_path
+        
+        # Otherwise, load from script path
+        elif context.script_path or self.script_path:
+            script_path = context.script_path or self.script_path
+            logger.info(f"Loading script from {script_path}")
+            
+            if not os.path.exists(script_path):
+                raise ValueError(f"Script file not found: {script_path}")
+                
+            with open(script_path, 'r') as f:
+                script_text = f.read()
+                
+            context.script_text = script_text
+            context.script_path = script_path
+        else:
+            raise ValueError("No script text or script path provided")
+        
+        # Store artifacts
+        self.steps["load_script"].artifacts["script_path"] = context.script_path
+        
+        return {
+            "script_text": script_text,
+            "script_path": context.script_path,
+            "word_count": len(script_text.split()),
+            "character_count": len(script_text)
+        }
+    
+    def _generate_video_from_script(self, context: PipelineContext) -> Dict[str, Any]:
+        """
+        Step: Generate a video from a script using the HeyGen API.
+        """
+        logger.info("Generating video from script using HeyGen API")
+        
+        # Get API key from config
+        api_key = context.config["api_keys"].get("heygen")
+        if not api_key:
+            raise ValueError("HeyGen API key is required for video generation")
+        
+        # Get script text from context
+        script_text = context.script_text
+        if not script_text:
+            raise ValueError("No script text available for video generation")
+        
+        # Create video cache directory
+        video_cache_dir = os.path.join(context.cache_dir, "videos")
+        os.makedirs(video_cache_dir, exist_ok=True)
+        
+        # Create output path for the video
+        video_path = os.path.join(
+            video_cache_dir,
+            f"{hashlib.md5(script_text.encode()).hexdigest()}_heygen.mp4"
+        )
+        
+        # Initialize HeyGen client
+        client = HeyGenClient(
+            api_key=api_key,
+            output_dir=video_cache_dir
+        )
+        
+        # Default voice ID if none is provided
+        if not self.heygen_voice_id:
+            # You can set a default voice ID here
+            default_voice_id = "en-US-1"  # Use an appropriate default voice ID
+            logger.info(f"No voice_id provided, using default voice ID: {default_voice_id}")
+        else:
+            default_voice_id = self.heygen_voice_id
+
+        # Generate video
+        # Use either avatar_id or talking_photo_id
+        output_path = client.create_and_download_video(
+            script=script_text,
+            output_path=video_path,
+            avatar_id=self.heygen_avatar_id,
+            voice_id=default_voice_id,  # Use default or provided voice ID
+            talking_photo_id=self.heygen_talking_photo_id,
+            background_url=self.heygen_background_url,
+            background_color=self.heygen_background_color,
+            dimension={"width": 1080, "height": 1920}  # Portrait mode
+        )
+        
+        logger.info(f"Video generated and saved to {output_path}")
+        
+        # Update context with the generated video path
+        context.input_video_path = output_path
+        
+        # Store artifacts
+        self.steps["generate_video"].artifacts["video_path"] = output_path
+        
+        return {
+            "video_path": output_path,
+            "script_text": script_text,
+            "script_path": context.script_path
+        }
+    
+    # ---------- Traditional Pipeline Steps ----------
+    
     def _analyze_script(self, context: PipelineContext) -> Dict[str, Any]:
-        """Step 1: Analyze script and extract transcript."""
-        logger.info("Analyzing script from video")
+        """Step: Analyze script and extract transcript."""
+        # Get the video path from context
+        video_path = context.input_video_path
+        if not video_path:
+            raise ValueError("No input video path provided for script analysis")
+            
+        logger.info(f"Analyzing script from video: {video_path}")
         
         # Get API key from config
         api_key = context.config["api_keys"].get("assemblyai")
@@ -670,7 +1050,7 @@ class PipelineOrchestrator:
         
         # Analyze video to get transcript
         transcript = analyzer.analyze(
-            context.input_video_path,
+            video_path,
             cache_dir=transcript_cache_dir,
             force_refresh=self.force_refresh
         )
@@ -678,7 +1058,7 @@ class PipelineOrchestrator:
         # Save transcript to a specific file for reference
         transcript_path = os.path.join(
             transcript_cache_dir,
-            f"{hashlib.md5(context.input_video_path.encode()).hexdigest()}.transcript.json"
+            f"{hashlib.md5(video_path.encode()).hexdigest()}.transcript.json"
         )
         transcript.save(transcript_path)
         
@@ -693,17 +1073,51 @@ class PipelineOrchestrator:
             "segment_count": len(transcript.segments)
         }
     
+    def _verify_transcript_ready(self, context: PipelineContext) -> Dict[str, Any]:
+        """Step: Verify that transcript is ready for B-roll detection."""
+        # Get transcript from previous step
+        analyze_result = context.intermediate_outputs.get("analyze_script")
+        if not analyze_result:
+            raise ValueError("Script analysis result not found in context")
+            
+        transcript_path = analyze_result["transcript_path"]
+        if not os.path.exists(transcript_path):
+            raise ValueError(f"Transcript file not found: {transcript_path}")
+            
+        logger.info(f"Transcript is ready for B-roll detection: {transcript_path}")
+        
+        return {
+            "transcript_path": transcript_path,
+            "status": "ready"
+        }
+    
+    def _verify_video_ready(self, context: PipelineContext) -> Dict[str, Any]:
+        """Step: Verify that the input video is ready for assembly."""
+        # Get the video path from context
+        video_path = context.input_video_path
+        if not video_path:
+            raise ValueError("No input video path provided")
+            
+        if not os.path.exists(video_path):
+            raise ValueError(f"Input video not found: {video_path}")
+            
+        logger.info(f"Input video is ready for assembly: {video_path}")
+        
+        return {
+            "input_video_path": video_path,
+            "status": "ready"
+        }
+    
     def _detect_broll_opportunities(self, context: PipelineContext) -> Dict[str, Any]:
-        """Step 2: Detect B-roll opportunities in the transcript."""
+        """Step: Detect B-roll opportunities in the transcript."""
         logger.info("Detecting B-roll opportunities")
         
-        # Get result from previous step
-        script_result = context.intermediate_outputs.get("analyze_script")
-        if not script_result:
-            raise ValueError("Script analysis result not found in context")
+        # Get transcript information
+        transcript_path = context.intermediate_outputs.get("transcript_ready", {}).get("transcript_path")
+        if not transcript_path:
+            raise ValueError("Transcript path not found in context")
         
         # Load transcript from file
-        transcript_path = script_result["transcript_path"]
         transcript = Transcript.load(transcript_path)
         
         # Create B-roll opportunities cache directory
@@ -754,7 +1168,7 @@ class PipelineOrchestrator:
         }
     
     def _extract_keywords(self, context: PipelineContext) -> Dict[str, Any]:
-        """Step 3: Extract and enhance keywords for B-roll search."""
+        """Step: Extract and enhance keywords for B-roll search."""
         logger.info("Extracting and enhancing keywords")
         
         # Get result from previous step
@@ -807,7 +1221,7 @@ class PipelineOrchestrator:
         }
     
     def _retrieve_videos(self, context: PipelineContext) -> Dict[str, Any]:
-        """Step 4: Retrieve videos for B-roll based on keywords."""
+        """Step: Retrieve videos for B-roll based on keywords."""
         logger.info("Retrieving videos for B-roll")
         
         # Get result from previous step
@@ -870,7 +1284,7 @@ class PipelineOrchestrator:
         }
     
     def _transform_videos(self, context: PipelineContext) -> Dict[str, Any]:
-        """Step 5: Transform retrieved videos to portrait format."""
+        """Step: Transform retrieved videos to portrait format."""
         logger.info("Transforming videos to portrait format")
         
         # Get result from previous step
@@ -976,13 +1390,17 @@ class PipelineOrchestrator:
         }
     
     def _assemble_video(self, context: PipelineContext) -> Dict[str, Any]:
-        """Step 6: Assemble final video with B-roll insertions."""
+        """Step: Assemble final video with B-roll insertions."""
         logger.info("Assembling final video with B-roll insertions")
         
-        # Get result from previous step
+        # Get result from previous steps
         transform_result = context.intermediate_outputs.get("transform_videos")
         if not transform_result:
             raise ValueError("Video transformation result not found in context")
+            
+        video_ready_result = context.intermediate_outputs.get("video_ready")
+        if not video_ready_result:
+            raise ValueError("Video ready verification result not found in context")
         
         # Get transformed videos file path
         transformed_videos_path = transform_result["transformed_videos_path"]
@@ -993,7 +1411,10 @@ class PipelineOrchestrator:
         
         # Get input and output video paths
         input_video_path = context.input_video_path
-        output_video_path = context.output_video_path
+        output_video_path = os.path.join(
+            os.path.dirname(context.output_video_path),
+            f"assembled_{os.path.basename(context.output_video_path)}"
+        )
         
         # Ensure output directory exists
         os.makedirs(os.path.dirname(os.path.abspath(output_video_path)), exist_ok=True)
@@ -1042,6 +1463,17 @@ class PipelineOrchestrator:
                 if hasattr(main_video, 'close'):
                     main_video.close()
                 
+                # Store artifact path
+                self.steps["assemble_video"].artifacts["assembled_video_path"] = output_video_path
+                
+                # Update context with assembled video path for post-processing
+                context.intermediate_outputs["assemble_video"] = {
+                    "input_video_path": input_video_path,
+                    "output_video_path": output_video_path,
+                    "broll_cuts_inserted": len(broll_cuts),
+                    "success": True
+                }
+                
                 return {
                     "input_video_path": input_video_path,
                     "output_video_path": output_video_path,
@@ -1068,7 +1500,7 @@ class PipelineOrchestrator:
             }
     
     def _apply_post_processing(self, context: PipelineContext) -> Dict[str, Any]:
-        """Step 7: Apply post-processing effects to the assembled video."""
+        """Step: Apply post-processing effects to the assembled video."""
         logger.info("Applying post-processing effects")
         
         # Get result from previous step
@@ -1080,7 +1512,7 @@ class PipelineOrchestrator:
         input_video_path = assembly_result["output_video_path"]
         if not os.path.exists(input_video_path):
             raise ValueError(f"Assembled video not found at {input_video_path}")
-        
+            
         # Get B-roll data path from previous steps
         broll_data_path = context.intermediate_outputs.get("retrieve_videos", {}).get("retrieved_videos_path")
         if not broll_data_path:
@@ -1089,12 +1521,6 @@ class PipelineOrchestrator:
         
         if not broll_data_path:
             raise ValueError("B-roll data not found in context")
-        
-        # Determine output path
-        output_video_path = os.path.join(
-            os.path.dirname(context.output_video_path),
-            f"{Path(context.output_video_path).stem}_post{Path(context.output_video_path).suffix}"
-        )
         
         # Create post-processing cache directory
         post_processing_cache_dir = os.path.join(context.cache_dir, "post_processing")
@@ -1127,7 +1553,7 @@ class PipelineOrchestrator:
         final_output_path = orchestrator.process(
             input_video_path=input_video_path,
             broll_data_path=broll_data_path,
-            output_video_path=output_video_path,
+            output_video_path=context.output_video_path,
             steps=enabled_steps,
             llm_api_key=llm_api_key,
             llm_api_url=llm_api_url,
@@ -1136,9 +1562,6 @@ class PipelineOrchestrator:
         
         # Store artifact path
         self.steps["post_process"].artifacts["post_processed_video_path"] = final_output_path
-        
-        # Update the final output video path in context
-        context.output_video_path = final_output_path
         
         # Return results
         return {
@@ -1150,29 +1573,53 @@ class PipelineOrchestrator:
         }
 
 
-def main():
-    """Main function to parse arguments and run the pipeline."""
+def parse_args():
+    """Parse command line arguments for CLI usage."""
     parser = argparse.ArgumentParser(description='Content Pipeline Orchestrator')
     
     # Required arguments
-    parser.add_argument('--input', required=True, help='Path to input video')
     parser.add_argument('--output', required=True, help='Path for output video')
     
-    # Optional arguments
+    # Config and execution options
     parser.add_argument('--config', default='config.yaml', help='Path to config file')
     parser.add_argument('--profile', default='default', help='Config profile to use')
     parser.add_argument('--cache-dir', help='Directory for caching (overrides config)')
-    parser.add_argument('--start-step', choices=[
-        'analyze_script', 'detect_broll_opportunities', 'extract_keywords',
-        'retrieve_videos', 'transform_videos', 'assemble_video'
-    ], help='Start pipeline from this step')
-    parser.add_argument('--end-step', choices=[
-        'analyze_script', 'detect_broll_opportunities', 'extract_keywords',
-        'retrieve_videos', 'transform_videos', 'assemble_video'
-    ], help='End pipeline at this step')
     parser.add_argument('--force-refresh', action='store_true', help='Force refresh and ignore cache')
     parser.add_argument('--parallel', action='store_true', help='Enable parallel execution where possible')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
+    
+    # Pipeline control
+    parser.add_argument('--start-step', choices=[
+        'generate_script', 'load_script', 'generate_video', 'analyze_script', 
+        'detect_broll_opportunities', 'extract_keywords',
+        'retrieve_videos', 'transform_videos', 'assemble_video', 'post_process'
+    ], help='Start pipeline from this step')
+    parser.add_argument('--end-step', choices=[
+        'generate_script', 'load_script', 'generate_video', 'analyze_script', 
+        'detect_broll_opportunities', 'extract_keywords',
+        'retrieve_videos', 'transform_videos', 'assemble_video', 'post_process'
+    ], help='End pipeline at this step')
+    
+    # Input source options (mutually exclusive)
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument('--input', help='Path to input video')
+    input_group.add_argument('--script-path', help='Path to script file')
+    input_group.add_argument('--script-text', help='Direct script text')
+    input_group.add_argument('--prompt', help='Natural language prompt for script generation')
+    
+    # Script generation options
+    parser.add_argument('--target-duration', type=int, default=20, choices=[10, 15, 20, 25, 30, 35, 40],
+                        help='Target duration in seconds for script generation')
+    
+    # HeyGen options
+    heygen_group = parser.add_argument_group('HeyGen Options')
+    avatar_group = heygen_group.add_mutually_exclusive_group()
+    avatar_group.add_argument('--avatar-id', help='HeyGen avatar ID')
+    avatar_group.add_argument('--talking-photo-id', help='HeyGen talking photo ID')
+    heygen_group.add_argument('--voice-id', help='HeyGen voice ID')
+    heygen_group.add_argument('--background-url', help='URL of background image/video for HeyGen')
+    heygen_group.add_argument('--background-color', default='#f6f6fc', 
+                            help='Background color for HeyGen (hex format)')
     
     args = parser.parse_args()
     
@@ -1180,15 +1627,16 @@ def main():
     if args.verbose:
         logger.setLevel(logging.DEBUG)
     
-    # Check if input video exists
-    if not os.path.exists(args.input):
-        logger.error(f"Input video not found: {args.input}")
-        sys.exit(1)
+    return args
+
+
+def main():
+    """Main entry point for the pipeline orchestrator."""
+    args = parse_args()
     
-    # Run the pipeline
     try:
+        # Initialize the pipeline orchestrator
         orchestrator = PipelineOrchestrator(
-            input_video_path=args.input,
             output_video_path=args.output,
             config_path=args.config,
             profile=args.profile,
@@ -1196,9 +1644,23 @@ def main():
             end_step=args.end_step,
             cache_dir=args.cache_dir,
             force_refresh=args.force_refresh,
-            parallel_execution=args.parallel
+            parallel_execution=args.parallel,
+            # Input source (only one will be non-None)
+            input_video_path=args.input,
+            script_path=args.script_path,
+            script_text=args.script_text,
+            prompt=args.prompt,
+            # Script generation params
+            target_duration=args.target_duration,
+            # HeyGen params
+            heygen_avatar_id=args.avatar_id,
+            heygen_talking_photo_id=args.talking_photo_id,
+            heygen_voice_id=args.voice_id,
+            heygen_background_url=args.background_url,
+            heygen_background_color=args.background_color,
         )
         
+        # Run the pipeline
         success = orchestrator.run()
         
         if success:
