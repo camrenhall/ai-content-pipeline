@@ -44,11 +44,11 @@ default:
     # Enable/disable specific post-processing steps
     enabled: true
     steps:
-      - sound_effects
-      - background_music
+       - sound_effects
+      # - background_music
       # Uncomment these as needed
-      - camera_movements
-      - transitions
+      # - camera_movements
+      # - transitions
       # - captioning # EXPENSIVE
   
     # Sound effects configuration

@@ -60,25 +60,40 @@ def crop_to_portrait(input_path, output_path, width=1080, height=1920):
         orig_height = int(video_stream['height'])
         logger.info(f"Original dimensions: {orig_width}x{orig_height}")
         
-        # Calculate crop width to maintain 9:16 aspect ratio
-        target_width = int(orig_height * 9/16)
-        crop_x = int((orig_width - target_width) / 2)
-        logger.info(f"Crop parameters: width={target_width}, x={crop_x}")
-        
-        # Process using ffmpeg
-        logger.info(f"Processing video to {output_path}...")
-        
-        # Check if audio stream exists
+        # Check for audio stream
         audio_stream = next((stream for stream in probe['streams'] 
-                            if stream['codec_type'] == 'audio'), None)
+                        if stream['codec_type'] == 'audio'), None)
+        
+        # Calculate aspect ratios
+        original_aspect = orig_width / orig_height
+        target_aspect = 9 / 16  # Portrait aspect ratio
         
         # Build the ffmpeg pipeline
-        pipeline = (
-            ffmpeg
-            .input(input_path)
-            .crop(crop_x, 0, target_width, orig_height)
-            .filter('scale', width, height)
-        )
+        pipeline = ffmpeg.input(input_path)
+        
+        # Adjust the video based on its original dimensions
+        if original_aspect > target_aspect:
+            # Video is too wide - need to crop width
+            target_width = int(orig_height * target_aspect)
+            crop_x = int((orig_width - target_width) / 2)
+            logger.info(f"Video too wide, cropping: width={target_width}, x={crop_x}")
+            pipeline = pipeline.crop(crop_x, 0, target_width, orig_height)
+        elif original_aspect < target_aspect:
+            # Video is too tall - need to crop height or pad width
+            # Option 1: Crop height
+            # target_height = int(orig_width / target_aspect)
+            # crop_y = int((orig_height - target_height) / 2)
+            # logger.info(f"Video too tall, cropping: height={target_height}, y={crop_y}")
+            # pipeline = pipeline.crop(0, crop_y, orig_width, target_height)
+            
+            # Option 2: Pad width (this avoids losing vertical content)
+            target_width = int(orig_height * target_aspect)
+            pad_x = int((target_width - orig_width) / 2)
+            logger.info(f"Video too tall, padding: adding {pad_x} pixels to each side")
+            pipeline = pipeline.filter('pad', target_width, orig_height, pad_x, 0)
+        
+        # Scale to final dimensions
+        pipeline = pipeline.filter('scale', width, height)
         
         # Add proper audio handling
         if audio_stream:
