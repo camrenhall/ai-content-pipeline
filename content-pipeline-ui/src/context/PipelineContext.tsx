@@ -47,54 +47,56 @@ export interface PipelineState {
 }
 
 // Define the initial state
+// In PipelineContext.tsx, update the initialState:
+
 const initialState: PipelineState = {
-  // Script Generation
-  prompt: '',
-  scriptText: '',
-  duration: 20,
-  temperature: 0.7,
-  
-  // Avatar Selection
-  avatarId: null,
-  talkingPhotoId: null,
-  voiceId: null,
-  voiceEmotion: 'Friendly',
-  voiceSpeed: 1.0,
-  avatarScale: 1.0,
-  avatarOffsetX: 0,
-  avatarOffsetY: 0,
-  avatarStyle: 'normal',
-  landscapeAvatar: false,
-  backgroundUrl: '',
-  backgroundColor: '#f6f6fc',
-  caption: false,
-  elevenLabsEnabled: false,
-  elevenLabsModel: 'eleven_turbo_v2',
-  elevenLabsStability: 0.5,
-  elevenLabsSimilarity: 0.75,
-  elevenLabsStyle: 0.0,
-  
-  // Pipeline Configuration
-  selectedProfile: 'default',
-  configSections: {
-    'sound_effects': true,
-    'background_music': true,
-    'camera_movements': false,
-    'transitions': false,
-    'captioning': false
-  },
-  
-  // Input/Output Paths
-  inputVideoPath: null,
-  outputVideoPath: null,
-  cacheDir: './cache',
-  
-  // Execution
-  isRunning: false,
-  progress: 0,
-  currentStep: '',
-  logOutput: []
-};
+    // Script Generation
+    prompt: '',
+    scriptText: '',
+    duration: 20,
+    temperature: 0.7,
+    
+    // Avatar Selection
+    avatarId: null,
+    talkingPhotoId: null,
+    voiceId: null,
+    voiceEmotion: 'Friendly',
+    voiceSpeed: 1.0,
+    avatarScale: 1.0,
+    avatarOffsetX: 0,
+    avatarOffsetY: 0,
+    avatarStyle: 'normal',
+    landscapeAvatar: false,
+    backgroundUrl: '',
+    backgroundColor: '#f6f6fc',
+    caption: false,
+    elevenLabsEnabled: false,
+    elevenLabsModel: 'eleven_turbo_v2',
+    elevenLabsStability: 0.5,
+    elevenLabsSimilarity: 0.75,
+    elevenLabsStyle: 0.0,
+    
+    // Pipeline Configuration
+    selectedProfile: 'default',
+    configSections: {
+      'sound_effects': true,
+      'background_music': true,
+      'camera_movements': false,
+      'transitions': false,
+      'captioning': false
+    },
+    
+    // Input/Output Paths
+    inputVideoPath: null,
+    outputVideoPath: null,
+    cacheDir: '../cache',  // Updated to point to parent directory
+    
+    // Execution
+    isRunning: false,
+    progress: 0,
+    currentStep: '',
+    logOutput: []
+  };
 
 // Create the context
 interface PipelineContextType {
@@ -169,7 +171,7 @@ export const PipelineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       updateState({ 
         isRunning: false, 
         progress: 100,
-        outputVideoPath: './output/final_video.mp4'  // This would be the actual output path
+        outputVideoPath: '../output/final_video.mp4'  // This would be the actual output path
       });
       
     } catch (error) {

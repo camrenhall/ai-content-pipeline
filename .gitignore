@@ -29,6 +29,7 @@ node_modules/
 *.m4a
 
 # Distribution / packaging
+content-pipeline-ui/release
 .Python
 build/
 develop-eggs/
