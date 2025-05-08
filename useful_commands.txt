@@ -35,4 +35,12 @@ python broll_opportunity_detector.py \
 
   FOR VIDEO ASSET RETRIEVER
 
+
+
+FOR PIPELINE ORCHESTRATOR
+
+
+
+  
+
   

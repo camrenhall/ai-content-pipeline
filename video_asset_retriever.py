@@ -239,7 +239,7 @@ class VideoAssetRetriever:
         query = self._construct_search_query(keywords)
         
         # Check if we already have suitable videos in cache
-        cached_videos = self._find_cached_videos(query, min_duration)
+        cached_videos = self._find_cached_videos(query, min_duration, allow_fallback=False)
         if cached_videos:
             # Return a random cached video to add variety
             return random.choice(cached_videos)
@@ -302,19 +302,18 @@ class VideoAssetRetriever:
         
         return query
     
-    def _find_cached_videos(self, query: str, min_duration: float) -> List[VideoMetadata]:
+    def _find_cached_videos(self, query: str, min_duration: float, allow_fallback: bool = False) -> List[VideoMetadata]:
         """
         Find suitable videos in the cache.
         
         Args:
             query: Search query used to find videos
             min_duration: Minimum duration in seconds
+            allow_fallback: If True, will fall back to any video meeting requirements if no query match
             
         Returns:
             List of suitable VideoMetadata objects from cache
         """
-        suitable_videos = []
-        
         # Check query-specific cache first
         query_videos = [
             v for v in self.metadata_cache.values()
@@ -327,14 +326,18 @@ class VideoAssetRetriever:
         if query_videos:
             return query_videos
         
-        # If no query-specific videos, check all videos in cache
-        for video in self.metadata_cache.values():
-            if (video.meets_requirements(min_duration, self.min_resolution) and
-                video.local_path and 
-                os.path.exists(video.local_path)):
-                suitable_videos.append(video)
+        # If allow_fallback is set and no query-specific videos, check all videos in cache
+        if allow_fallback:
+            suitable_videos = []
+            for video in self.metadata_cache.values():
+                if (video.meets_requirements(min_duration, self.min_resolution) and
+                    video.local_path and 
+                    os.path.exists(video.local_path)):
+                    suitable_videos.append(video)
+            return suitable_videos
         
-        return suitable_videos
+        # Otherwise return empty list (will trigger a new API search)
+        return []
     
     async def _search_videos(self, session: aiohttp.ClientSession, query: str) -> List[VideoMetadata]:
         """
