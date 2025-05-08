@@ -21,10 +21,11 @@
       "dist/**/*",
       "build/**/*",
       "node_modules/**/*",
-      "package.json"
+      "package.json",
+      "public/electron.js"
     ],
     "directories": {
-      "buildResources": "assets",
+      "buildResources": "public",
       "output": "release"
     },
     "extraResources": [
